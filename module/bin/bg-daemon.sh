@@ -39,9 +39,9 @@ BOOT_TICKS=0
 SLEEP_PID=""
 
 # 连续多少个 tick 都在"明显充电"才认为驱动状态真丢了。
-# 80% 附近掉一格再补电是驱动的正常行为（官方导航断充也这样），
-# 以前 2 tick（6 秒）就补写，等于跟驱动抢控制权，反而把补电打断。
-REASSERT_TICKS=${REASSERT_TICKS:-30}
+# 80% 附近掉一格再补电是驱动的正常行为，不能一充就补写。
+# 注意按"间隔"算：旁路中现在是 30 秒一轮，30 tick 就是 15 分钟（太久了）。
+REASSERT_TICKS=${REASSERT_TICKS:-2}
 
 VERIFY_ON_TRIES=${VERIFY_ON_TRIES:-8}      # 8×2s = 16s 等它停
 VERIFY_OFF_TRIES=${VERIFY_OFF_TRIES:-12}   # 12×2s = 24s 等它重新充
@@ -77,13 +77,13 @@ nap() {
   SLEEP_PID=""
 }
 
-logi "=== daemon start v1.6 pid=$$ backend=$BACKEND mode=$MODE thr=$THRESHOLD_ON/$THRESHOLD_OFF poll=$POLL ==="
+logi "=== daemon start v1.6.5 pid=$$ backend=$BACKEND mode=$MODE thr=$THRESHOLD_ON/$THRESHOLD_OFF poll=$POLL ==="
 
-# 启动校验：本地记着"旁路中"，但硬件明明在充电 → 说明重启过，状态已失效
-if [ "$BP" = "1" ] && is_charging; then
-  BP=0; write_bp 0
-  logi "startup: recorded BP=1 but charging (cur=$CUR) → reset"
-fi
+# 启动时无条件重置 BP，让主循环按当前电量重新裁决：
+# bp_on 只是我们自己的记账，而 smart_chg 是驱动级状态，进程退出时被 on_exit 清掉后，
+# 重启读到的 bp_on=1 就是"假旁路" —— 界面说旁路中，实际 smart_chg=0 在快充。
+# 重启多写一次 smart_chg 没有副作用，比漏停充强得多。
+BP=0; write_bp 0
 
 push_ui "旁路供电守护已启动"
 
@@ -177,10 +177,11 @@ next_interval() {
   _p=$POLL
   [ "$_p" -ge 1 ] 2>/dev/null || _p=3
   [ "$_p" -gt 15 ] && _p=15
-  # 开机后头 10 轮用快节奏（约 30 秒）：刚开机时 PD 还没协商完，
+  # 开机后头 30 轮用快节奏（约 90 秒）：刚开机时 PD 还没协商完，
   # 很容易读成"没插电"，然后一觉睡 60 秒 —— 这期间电池会一直快充。
-  # 等状态稳定了再切到慢档。
-  if [ "$BOOT_TICKS" -le 10 ]; then IV=$_p; return; fi
+  # 实测 30 秒窗口不够（开机后 53 秒才第一次写停充位），拉到 90 秒。
+  # 代价只是多 30 次唤醒（一次性约 1.5 秒 CPU），可忽略。
+  if [ "$BOOT_TICKS" -le 30 ]; then IV=$_p; return; fi
   # 插拔由 bg-watch.sh 负责即时唤醒，所以这里可以睡得比较沉（兜底而已）
   if [ "$ENABLED" != "1" ]; then IV=$((_p * 20)); return; fi   # 关闭：60s
   if [ "$ONCH" != "1" ]; then
