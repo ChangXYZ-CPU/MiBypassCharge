@@ -93,6 +93,30 @@
   </section>
 
   <section class="card">
+    <div class="row">
+      <div class="rowtext">
+        <div class="k">插拔即时响应</div>
+        <div class="d" id="watchDesc">开：插上就停，多耗约 0.2%/天；关：省电，但要等下一次巡检</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="watchOn" checked>
+        <span class="track"></span>
+      </label>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <div class="rowtext">
+        <div class="k">巡检间隔</div>
+        <div class="d">平时多久看一眼电量，越小越灵敏越费电</div>
+      </div>
+      <div class="stepper">
+        <button class="step" id="pollMinus" type="button">−</button>
+        <b class="thwrap"><input id="pollNum" class="thnum" type="number" min="5" max="120" step="5" value="30" inputmode="numeric"><i>秒</i></b>
+        <button class="step" id="pollPlus" type="button">+</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
     <div class="loghead">
       <span>运行日志</span>
       <button class="mini" id="btnLog">刷新</button>
@@ -246,6 +270,14 @@ window.__BG_VER__ = "1.4";
     var dv = $('daemonText');
     if (state.DAEMON === '1') { dv.textContent = '运行中'; dv.style.color = '#30d158'; }
     else { dv.textContent = '未响应'; dv.style.color = '#ff9f0a'; }
+
+    var watchOn = (state.WATCH_RUNNING === '1');
+    var watchCfg = (conf.WATCH !== '0');
+    $('watchOn').checked = watchCfg;
+    $('watchDesc').textContent = !watchCfg
+      ? '已关闭：省约 0.2%/天，插拔要等下一次巡检'
+      : (watchOn ? '运行中：插拔即时响应，多耗约 0.2%/天' : '已配置但未运行：可能刚开机或启动失败');
+    $('watchDesc').style.color = (watchCfg && !watchOn) ? '#ff9f0a' : '';
   }
 
   /* ---------------- 拉数据 ---------------- */
@@ -267,7 +299,9 @@ window.__BG_VER__ = "1.4";
       conf = parseKV(txt);
       var on = num(conf.THRESHOLD_ON, 80);
       $('enabled').checked = conf.ENABLED !== '0';
+      $('watchOn').checked = conf.WATCH !== '0';
       $('thNum').value = on;
+      $('pollNum').value = num(conf.CHECK_INTERVAL, 30);
       render();
     });
   }
@@ -312,6 +346,31 @@ window.__BG_VER__ = "1.4";
         toast(v ? '旁路已开启' : '旁路已关闭');
         return loadConf();
       }).then(function () { self.disabled = false; });
+    });
+
+    /* 插拔监听开关 */
+    $('watchOn').addEventListener('change', function () {
+      var v = this.checked ? 1 : 0;
+      var self = this;
+      self.disabled = true;
+      sh(CTL + ' set WATCH ' + v).then(function () {
+        return refreshState();
+      }).then(function () { self.disabled = false; });
+    });
+
+    /* 巡检间隔：−/+ 和数字框，5~120 秒 */
+    var pollBox = $('pollNum');
+    function applyPoll(v) {
+      v = Math.max(5, Math.min(120, parseInt(v, 10) || 30));
+      v = Math.round(v / 5) * 5;
+      pollBox.value = v;
+      sh(CTL + ' set CHECK_INTERVAL ' + v).then(loadConf);
+    }
+    $('pollMinus').addEventListener('click', function () { applyPoll((parseInt(pollBox.value, 10) || 30) - 5); });
+    $('pollPlus').addEventListener('click', function () { applyPoll((parseInt(pollBox.value, 10) || 30) + 5); });
+    pollBox.addEventListener('change', function () { applyPoll(this.value); });
+    pollBox.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { this.blur(); applyPoll(this.value); }
     });
 
     var numBox = $('thNum');

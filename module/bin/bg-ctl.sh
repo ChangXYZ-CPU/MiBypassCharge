@@ -44,6 +44,52 @@ reconcile() {
   [ -n "$_dpid" ] && kill -USR1 "$_dpid" 2>/dev/null
 }
 
+# 监听器开关：关掉省 ~0.23% 单核，代价是插拔要等巡检周期才被发现
+watch_start() {
+  # 防止重复：锁文件里的 pid 认命令行才作数
+  if [ -f "$DATA_DIR/.watch.lock" ]; then
+    _wp=$(cat "$DATA_DIR/.watch.lock/pid" 2>/dev/null)
+    case "$_wp" in
+      ''|*[!0-9]*) : ;;
+      *)
+        [ -r "/proc/$_wp/cmdline" ] && \
+        case "$(tr '\0' ' ' < "/proc/$_wp/cmdline" 2>/dev/null)" in
+          *bg-watch.sh*) return 0 ;;
+        esac
+        ;;
+    esac
+  fi
+  rm -rf "$DATA_DIR/.watch.lock" 2>/dev/null
+  # setsid 脱离本命令的进程组：bg-ctl 由 WebUI exec，退出时会清掉自己 fork 的后台进程
+  setsid sh "$MODDIR/bin/bg-watch.sh" >/dev/null 2>&1 < /dev/null &
+}
+
+# 找所有真正在跑的 bg-watch 进程（不能只信锁文件：pid 会复用、锁可能残留）
+watch_pids() {
+  for p in $(pgrep -f "bg-watch[.]sh" 2>/dev/null); do
+    [ -r "/proc/$p/cmdline" ] || continue
+    case "$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)" in
+      *bg-watch.sh*) echo "$p" ;;
+    esac
+  done
+}
+
+watch_stop() {
+  # 先杀子进程（logcat / while 子 shell），再杀主进程
+  for p in $(watch_pids); do
+    for c in $(pgrep -P "$p" 2>/dev/null); do kill "$c" 2>/dev/null; done
+    kill "$p" 2>/dev/null
+  done
+  sleep 1
+  # 兜底：还在就强杀
+  for p in $(watch_pids); do kill -9 "$p" 2>/dev/null; done
+  rm -rf "$DATA_DIR/.watch.lock" 2>/dev/null
+}
+
+watch_status() {
+  [ -n "$(watch_pids)" ] && echo "1" || echo "0"
+}
+
 cmd=$1
 
 case "$cmd" in
@@ -52,6 +98,7 @@ case "$cmd" in
     BP=$(read_bp)
     print_state ts
     if daemon_alive; then echo "DAEMON=1"; else echo "DAEMON=0"; fi
+    echo "WATCH_RUNNING=$(watch_status)"
     ;;
 
   get)
@@ -62,7 +109,7 @@ case "$cmd" in
     k=$2; v=$3
     [ -z "$k" ] && { echo "ERR|missing key"; exit 1; }
     case "$k" in
-      THRESHOLD_ON|THRESHOLD_OFF|POLL|ENABLED|MODE|NOTIFY|BACKEND|SMART_MODE|FALLBACK)
+      THRESHOLD_ON|THRESHOLD_OFF|POLL|CHECK_INTERVAL|ENABLED|MODE|NOTIFY|BACKEND|SMART_MODE|FALLBACK)
         set_key "$k" "$v"
         load_conf
         case "$k" in
@@ -70,6 +117,14 @@ case "$cmd" in
           *) : ;;
         esac
         echo "OK"
+        ;;
+
+      WATCH)
+        case "$v" in
+          1) set_key WATCH 1; watch_start; echo "OK" ;;
+          0) set_key WATCH 0; watch_stop;  echo "OK" ;;
+          *) echo "ERR|WATCH 只能是 0 或 1"; exit 1 ;;
+        esac
         ;;
       *)
         echo "ERR|unknown key"

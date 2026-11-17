@@ -34,7 +34,13 @@ sleep 1
 # 插拔监听器（logcat battery_status）：插拔时即时叫醒守护
 # 开机时清掉上次遗留的锁（pid 会被复用，留着只会误导）
 rm -rf "$DATA/.watch.lock" 2>/dev/null
-MODDIR="$MODDIR" sh "$MODDIR/bin/bg-watch.sh" >/dev/null 2>&1 &
+# WATCH=0 表示用户嫌它费电关掉了，就不启动（缺字段时默认开）
+_watch=1
+[ -f "$DATA/config.conf" ] && . "$DATA/config.conf" 2>/dev/null
+[ "$WATCH" = "0" ] && _watch=0
+if [ "$_watch" = "1" ]; then
+  MODDIR="$MODDIR" sh "$MODDIR/bin/bg-watch.sh" >/dev/null 2>&1 &
+fi
 
 # 守护 + 看护
 MODDIR="$MODDIR" sh "$MODDIR/bin/bg-supervise.sh" >/dev/null 2>&1 &

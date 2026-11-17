@@ -35,6 +35,8 @@ MODE=auto
 THRESHOLD_ON=80
 THRESHOLD_OFF=75
 POLL=3
+CHECK_INTERVAL=30
+WATCH=1
 BACKEND=smartchg
 SMART_MODE=3
 FALLBACK=1
@@ -45,6 +47,8 @@ NOTIFY=0'
 load_conf() {
   . "$CONF" 2>/dev/null
   [ -z "$POLL" ] && POLL=3
+  [ -z "$CHECK_INTERVAL" ] && CHECK_INTERVAL=30
+  [ -z "$WATCH" ] && WATCH=1
   [ -z "$THRESHOLD_ON" ] && THRESHOLD_ON=80
   [ -z "$THRESHOLD_OFF" ] && THRESHOLD_OFF=70
   [ -z "$MODE" ] && MODE=auto
@@ -53,6 +57,10 @@ load_conf() {
   [ -z "$BACKEND" ] && BACKEND=smartchg
   [ -z "$SMART_MODE" ] && SMART_MODE=3
   [ -z "$FALLBACK" ] && FALLBACK=1
+  # 老配置缺新字段时补写回去（否则界面读不到、升级后一直用默认值）
+  if ! grep -q '^WATCH=' "$CONF" 2>/dev/null || ! grep -q '^CHECK_INTERVAL=' "$CONF" 2>/dev/null; then
+    save_conf
+  fi
 }
 
 save_conf() {
@@ -62,6 +70,8 @@ save_conf() {
     echo "THRESHOLD_ON=$THRESHOLD_ON"
     echo "THRESHOLD_OFF=$THRESHOLD_OFF"
     echo "POLL=$POLL"
+    echo "CHECK_INTERVAL=$CHECK_INTERVAL"
+    echo "WATCH=$WATCH"
     echo "BACKEND=$BACKEND"
     echo "SMART_MODE=$SMART_MODE"
     echo "FALLBACK=$FALLBACK"

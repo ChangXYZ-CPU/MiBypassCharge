@@ -77,7 +77,7 @@ nap() {
   SLEEP_PID=""
 }
 
-logi "=== daemon start v1.6.5 pid=$$ backend=$BACKEND mode=$MODE thr=$THRESHOLD_ON/$THRESHOLD_OFF poll=$POLL ==="
+logi "=== daemon start v1.7 pid=$$ backend=$BACKEND mode=$MODE thr=$THRESHOLD_ON/$THRESHOLD_OFF poll=$POLL ==="
 
 # 启动时无条件重置 BP，让主循环按当前电量重新裁决：
 # bp_on 只是我们自己的记账，而 smart_chg 是驱动级状态，进程退出时被 on_exit 清掉后，
@@ -174,26 +174,25 @@ do_off() {
 # 插上电后驱动自己就按它执行，守护不需要守着 —— 所以空闲时可以把间隔拉得很长。
 # 直接算进 IV，不要用 $(next_interval) —— 命令替换每轮 fork 一次，26ms 白花
 next_interval() {
-  _p=$POLL
-  [ "$_p" -ge 1 ] 2>/dev/null || _p=3
-  [ "$_p" -gt 15 ] && _p=15
-  # 开机后头 30 轮用快节奏（约 90 秒）：刚开机时 PD 还没协商完，
-  # 很容易读成"没插电"，然后一觉睡 60 秒 —— 这期间电池会一直快充。
-  # 实测 30 秒窗口不够（开机后 53 秒才第一次写停充位），拉到 90 秒。
-  # 代价只是多 30 次唤醒（一次性约 1.5 秒 CPU），可忽略。
-  if [ "$BOOT_TICKS" -le 30 ]; then IV=$_p; return; fi
-  # 插拔由 bg-watch.sh 负责即时唤醒，所以这里可以睡得比较沉（兜底而已）
-  if [ "$ENABLED" != "1" ]; then IV=$((_p * 20)); return; fi   # 关闭：60s
-  if [ "$ONCH" != "1" ]; then
-    if [ "$MODE" = "force_on" ]; then IV=$((_p * 3)); else IV=$((_p * 20)); fi
-    return                                                     # 未插电：60s
+  # CHECK_INTERVAL = 平时巡检秒数（界面直接填），5~120
+  _p=$CHECK_INTERVAL
+  [ "$_p" -ge 5 ] 2>/dev/null || _p=30
+  [ "$_p" -gt 120 ] && _p=120
+  # 快档：临界/开机，最小 3 秒（保证精确停在阈值上）
+  _fast=$(( _p / 10 ))
+  [ "$_fast" -lt 3 ] && _fast=3
+  # 开机后头 30 轮用快节奏（约 90 秒）：PD 还没协商完，容易误判"没插电"
+  if [ "$BOOT_TICKS" -le 30 ]; then IV=$_fast; return; fi
+  # 没插电 / 功能关：两倍巡检周期（反正 watch 会在插拔时叫醒）
+  if [ "$ENABLED" != "1" ] || [ "$ONCH" != "1" ]; then
+    if [ "$MODE" = "force_on" ]; then IV=$_fast; else IV=$((_p * 2)); fi
+    return
   fi
-  if [ "$BP" = "1" ]; then IV=$((_p * 10)); return; fi         # 旁路中：30s
   if [ "$MODE" != "force_on" ]; then
     _d=$(( THRESHOLD_ON - LEVEL ))
-    [ "$_d" -le 3 ] 2>/dev/null && { IV=$_p; return; }          # 快到阈值：3s 精确停
+    [ "$_d" -le 3 ] 2>/dev/null && { IV=$_fast; return; }       # 快到阈值：精确停
   fi
-  IV=$((_p * 10))                                              # 插电中段：30s
+  IV=$_p                                                       # 旁路中/插电中段
 }
 
 while true; do
