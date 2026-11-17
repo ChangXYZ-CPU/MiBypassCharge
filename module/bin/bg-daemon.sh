@@ -6,11 +6,15 @@
 #
 # 省电（v1.5+）：轮询间隔按场景自适应，不再死守 3 秒
 #   旁路中 / 快到阈值 → POLL（3s）   要精确停充、要发现拔线
-#   插着电、离阈值还远 → POLL×3（9s） 电量涨得慢，9 秒够
-#   没插电 / 功能关闭 → POLL×7（21s） 这时什么都做不了
+#   插着电、离阈值还远 → POLL×5（15s） 电量涨得慢
+#   没插电           → POLL×10（30s） 这时什么都做不了，只需发现"插上了"
 #
 # 唤醒（v1.5+）：WebUI 改配置会发 SIGUSR1，nap 立刻被打断重新裁决，
 # 不用等睡满一个周期。
+#
+# 教训（v1.6.1）：停充位 smart_chg 是"粘"的，拔电也不清。曾试过拔电时把它
+# 保留成"充到阈值停"，结果关掉开关后没人去松开它，手机在 79% 一直不充电。
+# 现在：拔电照旧清 0；功能关闭 / force_off 每轮都确认它是松开的。
 
 MODDIR=${MODDIR:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}
 . "$MODDIR/bin/bg-lib.sh"
@@ -60,7 +64,9 @@ on_exit() {
 trap on_exit EXIT
 trap 'exit 0' INT TERM
 
-# 可被打断的等待：WebUI 改完配置发 SIGUSR1，立刻醒来重新裁决
+# 可被打断的等待：WebUI 改完配置会发 SIGUSR1。
+# 注意它只是"锦上添花"——mksh 在 wait 子进程时用 sigsuspend，信号会被屏蔽，
+# 所以改配置能不能立刻生效，真正靠的是 bg-ctl.sh 在 set 之后自己校正一次。
 trap 'if [ -n "$SLEEP_PID" ]; then kill "$SLEEP_PID" 2>/dev/null; fi' USR1
 
 nap() {
@@ -170,9 +176,9 @@ next_interval() {
   _p=$POLL
   [ "$_p" -ge 1 ] 2>/dev/null || _p=3
   [ "$_p" -gt 15 ] && _p=15
-  if [ "$ENABLED" != "1" ]; then IV=$((_p * 20)); return; fi   # 关闭：彻底闲着
+  if [ "$ENABLED" != "1" ]; then IV=$((_p * 20)); return; fi   # 关闭：彻底闲着（改配置会 SIGUSR1 叫醒）
   if [ "$ONCH" != "1" ]; then                                  # 没插电：只等"插上了"
-    if [ "$MODE" = "force_on" ]; then IV=$((_p * 3)); else IV=$((_p * 20)); fi
+    if [ "$MODE" = "force_on" ]; then IV=$((_p * 3)); else IV=$((_p * 10)); fi
     return
   fi
   if [ "$BP" = "1" ]; then IV=$((_p * 3)); return; fi          # 已在旁路：看补电、看拔线
@@ -203,16 +209,14 @@ while true; do
     THRESHOLD_OFF=$((THRESHOLD_ON - 5))
   fi
 
-  # 拔电时把停充位对齐到「当前阈值」，而不是清 0：
-  # smart_chg 是驱动级的「充到 X 停」，插上电后驱动自己就会按它执行，
-  # 根本不需要守护守着。这是把空闲轮询拉到 60 秒的前提。
-  if [ "$ONCH" != "1" ]; then
-    _ws="off"
-    if [ "$ENABLED" = "1" ] && [ "$MODE" = "auto" ]; then _ws=$THRESHOLD_ON; fi
-    if [ "$LAST_SMART" != "$_ws" ]; then
-      if [ "$_ws" = "off" ]; then smart_clear; else smart_set "$_ws"; fi
-      LAST_SMART=$_ws
-      logi "unplugged: 停充位对齐 -> $_ws"
+  # 功能关闭 / 强制充电：必须保证停充位是松开的。
+  # 踩过的坑：拔电时把 smart_chg 留成「充到 80 停」，插上电后又关掉开关，
+  # 结果没有任何地方去清它 —— 手机一直不充电（79% 卡了半天）。
+  if [ "$ENABLED" != "1" ] || [ "$MODE" = "force_off" ]; then
+    if [ "$LAST_SMART" != "off" ]; then
+      smart_clear
+      LAST_SMART="off"
+      logi "停充位已松开（ENABLED=$ENABLED MODE=$MODE）"
     fi
   fi
 
@@ -269,13 +273,7 @@ while true; do
       logi "do_on failed, backoff 6 ticks"
     fi
   elif [ "$WANT" = "0" ] && [ "$BP" = "1" ]; then
-    if [ "$ONCH" = "1" ]; then
-      do_off
-    else
-      # 拔电：只清记账；停充位上面已经对齐成"充到 X 停"，插上后驱动自己干活
-      BP=0; write_bp 0
-      logi "BP OFF (unplugged, smart_chg 保留)"
-    fi
+    do_off
   elif [ "$WANT" = "1" ] && [ "$BP" = "1" ]; then
     if is_charging; then
       STRIKES=$((STRIKES + 1))
