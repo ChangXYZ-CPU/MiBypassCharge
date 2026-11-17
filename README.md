@@ -8,6 +8,7 @@ KernelSU 模块：插上充电器后，电池充到设定电量就停止充电�
 - 系统：HyperOS 2（实测 `2.0.205.0.VNKCNXM`，Android 15）
 - Root：**仅 KernelSU**（WebUI 依赖 `window.ksu`，不支持 Magisk / APatch）
 - 模块本身只有 root 脚本 + WebUI，**不安装任何 App**
+- 注：本人制作模块初衷为自用，可能因学业原因维护修理不及时，欢迎提 Issue，但无法保证响应时效。目前仅考虑针对本机开发。
 
 ## 目录
 
