@@ -28,7 +28,7 @@ module/                    模块本体（可直接打包成 zip 刷入）
 
 docs/
   变更说明.md              从 v1.1 到 v1.7.1 的改动、实测数据、踩过的坑
-  审核报告.md              v1.1 的实机审核：节点矩阵、官方实现反编译、逐条缺陷
+  审核报告.md              v1.1 的实机审核：节点矩阵、官方停充机制、逐条缺陷
   调试速查.md              命令速查（只看电流，不看 status）
   probe-k70.sh             节点探针（默认只读；--test 会逐项写并还原）
   test-full.sh             全量回归脚本（31 项，跑完自动还原配置）
@@ -138,8 +138,8 @@ getprop persist.vendor.smartchg        # 含 bit1 即支持
 
 部分工程实践参考了开源项目 [bypass-charger](https://github.com/QiZhi-yi/bypass-charger)
 （v10.3.5），具体包括：用 `flock` 串行化写充电节点（它记录过并发写导致厂商充电驱动死锁的事故）、
-KernelSU 禁用状态检测、退出时复位充电、`trap EXIT` 兜底。停充节点与阈值掩码则来自对
-小米安全中心「导航断充保护」的独立逆向分析，与其实现不同。详见 `docs/变更说明.md` §10.3。
+KernelSU 禁用状态检测、退出时复位充电、`trap EXIT` 兜底。停充通道使用小米系统自带的
+`smart_chg` 官方停充位，掩码语义见 `docs/变更说明.md` §10.1。
 
 ## 许可
 
