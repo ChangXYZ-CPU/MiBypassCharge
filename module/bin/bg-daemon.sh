@@ -77,7 +77,7 @@ nap() {
   SLEEP_PID=""
 }
 
-logi "=== daemon start v1.7 pid=$$ backend=$BACKEND mode=$MODE thr=$THRESHOLD_ON/$THRESHOLD_OFF poll=$POLL ==="
+logi "=== daemon start v1.7.1 pid=$$ backend=$BACKEND mode=$MODE thr=$THRESHOLD_ON/$THRESHOLD_OFF poll=$POLL ==="
 
 # 启动时无条件重置 BP，让主循环按当前电量重新裁决：
 # bp_on 只是我们自己的记账，而 smart_chg 是驱动级状态，进程退出时被 on_exit 清掉后，
@@ -190,7 +190,11 @@ next_interval() {
   fi
   if [ "$MODE" != "force_on" ]; then
     _d=$(( THRESHOLD_ON - LEVEL ))
-    [ "$_d" -le 3 ] 2>/dev/null && { IV=$_fast; return; }       # 快到阈值：精确停
+    # 只有"还没到但快到了"才用快档。旁路中 _d<=0，必须走慢档，
+    # 否则 CHECK_INTERVAL=120 时旁路中仍每 12 秒醒一次，白费电。
+    if [ "$_d" -ge 0 ] 2>/dev/null && [ "$_d" -le 3 ] 2>/dev/null; then
+      IV=$_fast; return
+    fi
   fi
   IV=$_p                                                       # 旁路中/插电中段
 }

@@ -273,7 +273,7 @@ window.__BG_VER__ = "1.4";
 
     var watchOn = (state.WATCH_RUNNING === '1');
     var watchCfg = (conf.WATCH !== '0');
-    $('watchOn').checked = watchCfg;
+    if (!$('watchOn').disabled) $('watchOn').checked = watchCfg;
     $('watchDesc').textContent = !watchCfg
       ? '已关闭：省约 0.2%/天，插拔要等下一次巡检'
       : (watchOn ? '运行中：插拔即时响应，多耗约 0.2%/天' : '已配置但未运行：可能刚开机或启动失败');
@@ -298,8 +298,8 @@ window.__BG_VER__ = "1.4";
     return sh('cat ' + DATA + '/config.conf 2>/dev/null').then(function (txt) {
       conf = parseKV(txt);
       var on = num(conf.THRESHOLD_ON, 80);
-      $('enabled').checked = conf.ENABLED !== '0';
-      $('watchOn').checked = conf.WATCH !== '0';
+      if (!$('enabled').disabled) $('enabled').checked = conf.ENABLED !== '0';
+      if (!$('watchOn').disabled) $('watchOn').checked = conf.WATCH !== '0';
       $('thNum').value = on;
       $('pollNum').value = num(conf.CHECK_INTERVAL, 30);
       render();
@@ -352,9 +352,9 @@ window.__BG_VER__ = "1.4";
     $('watchOn').addEventListener('change', function () {
       var v = this.checked ? 1 : 0;
       var self = this;
-      self.disabled = true;
+      self.disabled = true;              /* 防止 3 秒定时 render 把开关拨回去 */
       sh(CTL + ' set WATCH ' + v).then(function () {
-        return refreshState();
+        return loadConf();               /* 必须刷 conf：render 用的是 conf.WATCH */
       }).then(function () { self.disabled = false; });
     });
 
