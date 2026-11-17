@@ -1,0 +1,290 @@
+# 旁路供电守护 v1.1 · K70 实机审核报告
+
+> 审核对象：`旁路供电守护-v1.1-完整包`（`bypass-guard-v1.1.zip` + 源码 + 文档）
+> 审核设备：Redmi K70（`23113RKC6C` / `vermeer` / `kalama`=SM8550）
+> 系统：HyperOS `2.0.205.0.VNKCNXM`，Android 15，内核 `5.15.167-android13-8`
+> Root：KernelSU（`su -c id` → `uid=0 context=u:r:ksu:s0`），SELinux Enforcing
+> 审核方式：**全只读**（写权限只做到 `open(O_WRONLY)` 后立即 close，未执行任何 `write()`，节点值前后一致）
+> 日期：2026-11-17
+
+---
+
+## 0. 结论速览
+
+1. **模块在 K70 上根本跑不起来。** 它硬编码的 8 个候选节点，在这台机器上**一个都不存在**。`bg-detect.sh` 必然返回 `FAIL`，`NODE` 永远为空，因此"到阈值开旁路"这件事从未发生过。这不是"不稳定"，是"零成功率"。
+2. **真正的节点全在 `/sys/class/qcom-battery/`**，共 102 个：`input_suspend`、`restrict_chg`、`restrict_cur`、`charging_suspend_battery`、`night_charging`、`smart_chg`、`smart_batt`… 而模块的表里一个都没有（它有 `/sys/class/qcom-battery/restricted_charging`，K70 上不存在这个文件）。
+3. **官方确实有等价功能，而且实现方式和模块完全不是一条路。** 安全中心里叫「导航断充保护」（`md/g.java` + `md/c.java`），落点是 `smart_chg` 节点，写的是 **十六进制掩码**（`0x{电量<<16 | 标志位}`，80% → `0x500003`），由**充电驱动自己保持状态**，App 只在状态切换时写一次，**没有周期重申**。这正好解释了为什么官方"稳定"、Scene 和这个模块"不稳"——不是写节点的姿势问题，是**节点选错了层级**。
+4. **官方路径在本机实测可用**：`persist.vendor.smartchg=6` → bit1(0x2)=导航断充受支持；`vendor.xiaomi.hardware.micharge@1.0-service` 正在跑（`init.svc.micharge-hal-1-0: running`）。写 `smart_chg=0x340003` 后电池电流**立刻归零**、输入仍在（9 V）、Scene 显示 **0.00 W**，拔插不丢。
+5. **`input_suspend` 不是旁路，是断充。** 实测写入后 `status=Discharging`、电流 `+0.46 A`（手机转吃电池）、vbus 从 8.18 V 掉到 5.14 V。Scene 那套把"断输入"当旁路，用户感知就是"开了旁路电量还在掉、温度没降"。（详见 §3）
+6. **模块的设计缺陷即使把节点表改对，仍然存在 12 处**（见 §4），其中"旁路中把 usb.online=0 误判成拔电""通知栏『恢复充电』会永久退出自动模式""卸载后可能永久不充电"是最要命的三条。
+
+---
+
+## 1. 本机真实节点矩阵（实测）
+
+### 1.1 `/sys/class/qcom-battery/`（小米充电驱动，SELinux 标签 `vendor_sysfs_qcom_battery`）
+
+| 节点 | 实测值 | 权限 | 语义（据 HAL 符号与命名） |
+|---|---|---|---|
+| `input_suspend` | `0` | `system:system 660` | 挂起**输入**。实测 1 = 断输入，手机转吃电池（**不是旁路**） |
+| `restrict_chg` | `0` | `root:root 644` | 限制充电。实测 1 = 把充电电流压到 ~1 A（**限流，不是停充**） |
+| `restrict_cur` | `1000000` | `root:root 644` | 限制电流（µA，1 A） |
+| `charging_suspend_battery` | `0` | `root:root 644` | 挂起**电池**充电。实测写 1 无变化（本机无效） |
+| `night_charging` | `0` | `system:system 660` | 夜间充电位。实测写 1 无变化（Scene 的"1=停"在 K70 不成立） |
+| `smart_chg` | `0` | `system:system 660` | **官方充电保护掩码**，实测写 `0x{level<<16\|3}` = 真旁路 |
+| `smart_batt` | `0` | `system:system 660` | 电池保养（HAL `setSBState()`） |
+| `current_state` | `SNK_Ready` | 只读 | 充电状态机当前态 |
+
+权限探测 + 实写验证（2026-11-17 13:25）：`input_suspend` / `restrict_chg` / `charging_suspend_battery` / `night_charging` / `smart_chg` 五个节点**从 ksu 域都写成功**（`rc=0`），SELinux 不拦。
+
+### 1.2 `/sys/class/power_supply/battery/`（28 个节点，`vendor_sysfs_battery_supply`）
+
+```
+capacity  charge_control_limit  charge_control_limit_max  charge_counter
+charge_full  charge_full_design  charge_type  constant_charge_current
+current_now  cycle_count  device  health  model_name  power  power_avg
+power_now  present  status  subsystem  technology  temp  time_to_empty_avg
+time_to_full_avg  time_to_full_now  type  uevent  voltage_max  voltage_now
+voltage_ocv  wakeup42
+```
+
+注意两个细节：
+- **没有** `input_suspend`、`charging_enabled`、`battery_charging_enabled`、`charge_disable`、`constant_charge_current_max`。
+- `charge_control_limit = 4`、`charge_control_limit_max = 16`——这是**档位序号**，不是电流值。谁把它当电流写，都会出事。
+
+### 1.3 模块候选表 vs 本机（逐一核对）
+
+| # | 模块里的候选（`bg-detect.sh` L33-40） | 本机 | 结果 |
+|---|---|---|---|
+| 1 | `/sys/class/qcom-battery/restricted_charging` | 无此文件（有 `restrict_chg`） | **MISS** |
+| 2 | `/sys/class/power_supply/battery/input_suspend` | 无 | **MISS** |
+| 3 | `/sys/class/power_supply/battery/battery_charging_enabled` | 无 | **MISS** |
+| 4 | `/sys/class/power_supply/battery/charging_enabled` | 无 | **MISS** |
+| 5 | `/sys/class/power_supply/battery/charge_disable` | 无 | **MISS** |
+| 6 | `/sys/class/power_supply/battery/constant_charge_current_max` | 无（只有 `constant_charge_current`，只读） | **MISS** |
+| 7 | `/sys/class/power_supply/main/input_suspend` | `main` 目录不存在 | **MISS** |
+| 8 | `/sys/class/power_supply/bms/input_suspend` | `bms` 目录不存在 | **MISS** |
+
+> 文档 `技术说明.html` / `调试速查.md` 里那条"`restricted_charging|1|0|Not charging|0`"的探测成功样例，不是这台机器的输出。K70 上不存在这个节点。
+
+**直接后果**：`bg-detect.sh` 跑完输出 `FAIL|未找到可写且生效的节点`；`bg-daemon.sh` 在 `WANT=1 && BP!=1` 分支里探测失败 → `apply_node on` 因 `NODE` 为空直接 `return 1` → 日志里只有 `apply on failed node=`。用户看到的就是"完全不动作"。
+
+---
+
+## 2. 官方实现：「导航断充保护」反编译结果
+
+### 2.1 证据链
+
+| 环节 | 内容 |
+|---|---|
+| 字符串 | `resources.arsc`：`导航断充`、`导航断充保护已开启`、`导航场景下，充至某个电量时停止充电，省电及超级省电模式不生效`、`为延缓电池老化，导航期间充电至某个电量时，停止为电池继续充电`、`断充电量设置`、`智能识别导航场景，在设备充至某个电量时停止充电` |
+| 入口类 | `com.miui.powercenter.nightcharge.*`（`ChargeProtectFragment` / `NightChargeSettingsFragment` / `ChargerProtectActivity`） |
+| 管理者 | `md/g.java`（日志 tag `BaseChargeProtect_Navigation`，`b()` 返回 `"MODE_NAVIGATION"`） |
+| 执行者 | `md/c.java`（`ChargeProtectionUtils`，`o()`=开、`b()`=关、`p()`=带电量开） |
+| 总调度 | `md/o.java`（`SmartChargeProtectManager`，按"应工作的保护模式"选一个打开，切换时先关旧的） |
+
+### 2.2 真正的落点：`smart_chg` 掩码，不是 `input_suspend`
+
+`md/c.java` 关键代码（反射调 `miui.util.IMiCharge`）：
+
+```java
+private static boolean t(String str) {          // 写 smart_chg
+    return (Boolean) reflect(IMiCharge.getInstance())
+        .call("setMiChargePath", new Class[]{String.class,String.class}, "smart_chg", str);
+}
+
+public static void p(String type, int level) {  // 开保护
+    int flag = 0;
+    if ("navigation".equals(type))                        flag = 3;   // 0x3
+    else if ("always"|"handle"|"high_temp".equals(type))   flag = 17;  // 0x11
+    String v = "0x" + Integer.toHexString((level << 16) | flag);
+    t(v);   // 例：80% 导航断充 → "0x500003"
+}
+
+public static void b()                      { ... c("navigation"); }   // 关：写 "0x2"
+public static void a()                      { t("0x10"); }              // 关"全局"：写 "0x10"
+```
+
+`me/k.java` / `me/y.java` 给出同族标志位，拼出完整布局：
+
+| 位 | 值 | 含义 | 出处 |
+|---|---|---|---|
+| bit0 | `0x1` | 停充**生效** | `(z?1:0)\|32`、`(level<<16)\|3` |
+| bit1 | `0x2` | **导航**模式 | `p("navigation",…)` → `\|3`；关闭 → `0x2` |
+| bit4 | `0x10` | **全局/常态化**电池保护 | `p("always"…)` → `\|17`；关闭 → `0x10` |
+| bit5 | `0x20` | 另一个开关（`persist.vendor.smartchg` bit5 判定） | `me/k.java` |
+| bit7 | `0x80` | 无线静音充电 | `me/y.java` |
+| 高 16 位 | `level<<16` | 停充电量 | `md/c.java` |
+
+### 2.3 通道与能力位（实测）
+
+```
+persist.vendor.smartchg = 6   → 二进制 110
+  bit1(2) 导航断充     : 支持 ✔
+  bit2(4)              : 支持 ✔
+  bit4(16) 全局电池保护: 不支持 ✘（这就是设置里"充电上限/全局保护"在本机不出现的原因）
+init.svc.micharge-hal-1-0 = running
+/system/vendor/bin/hw/vendor.xiaomi.hardware.micharge@1.0-service
+/system/vendor/lib64/hw/vendor.xiaomi.hardware.micharge@1.0-impl.so
+```
+
+HAL 侧符号（`micharge-impl.so` 字符串表）直接印证：
+
+```
+setMiChargePath(hidl_string key, hidl_string value)   ← 通用写节点，走 NODE_PATH_MAP
+setInputSuspendState / getInputSuspendState          ← 对应 /sys/class/qcom-battery/input_suspend
+setNightChargingState / getNightChargingState        ← night_charging
+setSBState  setCoolModeState  setBtState  setWlsTxSpeed  setSmCountReset
+isBatteryLifeFunctionSupported / getBatteryChargeFull / getBatteryCycleCount / getBatterySoh
+```
+
+HAL 的 `.rc` 把 `input_suspend`、`night_charging`、`smart_batt`、`smart_chg`、`cool_mode` 等 chown 给 `system`，说明**这些节点是给用户态官方组件用的**。
+
+### 2.4 官方为什么不"重申"也能稳住
+
+`md/o.java` 只在三处动作：初始化（`o()`）、内容观察者变化（`g()`→`f()` 切换模式）、`x()` 清零。**没有 1 秒轮询、没有周期性重写**。
+
+因为 `smart_chg` 是**充电驱动级的状态**：驱动在每次充电事件（PD 重协商、插拔、温度）后自己按掩码执行"到点停充"，不需要用户态反复下命令。这正是模块 `REASSERT_TICKS` 想解决但解决不了的根因——`input_suspend` 这类"输入开关"会被驱动的状态机在事件后覆写，所以只能靠不停重写去对打；`smart_chg` 是驱动自己的策略位，不会被覆写。
+
+### 2.5 官方触发条件（可直接借用的两个点）
+
+- 导航 App / 系统侧广播：`miui.intent.action.ACTION_FULL_CHARGE_NAVIGATION`，extra `miui.intent.extra.FULL_CHARGER_NAVIGATION`（`md/g.java` L44-70）。
+- 生效前置（`me/w.java`）：`status==2(充电) || status==5(满)` 且 `plugged!=0`；**省电模式 / 超级省电模式下不生效**（对应那条文案）。
+- 阈值默认：`pc_smart_discharge_value = 80`（`gd/d.java` `O0()`）。
+
+---
+
+## 3. 实测结论：谁才是"旁路"（2026-11-17 13:25 实机验证）
+
+条件：插 PD 充电器、48% 电量、`status=Charging`、`current=-4.79A`、`vbus=8.18V`、`usb.online=1`。
+方法：每个节点写 5 秒 → 立即写回原值 → 再等 3 秒。全程只碰停充节点。
+
+| 节点 | 写入值 | 5 秒后 | 还原后 | 判定 |
+|---|---|---|---|---|
+| `qcom-battery/input_suspend` | `1` | `status=Discharging`，`cur=+0.46A`（**放电**），vbus 8.18→5.14V，`usb.online` 仍 `1` | 需数秒协商才回到充电 | **只是断充**，手机转吃电池。**不是旁路** |
+| `qcom-battery/restrict_chg` | `1` | 仍 `Charging`，电流被压到 `-0.94A` | `-2.41A` | **限流**（压到 ~1A），不是停充 |
+| `qcom-battery/charging_suspend_battery` | `1` | `-2.75A → -3.69A`，无变化 | — | **无效** |
+| `qcom-battery/night_charging` | `1` | `-4.13A → -4.54A`，无变化 | — | **无效**（Scene 分析里"1=停"在 K70 上不成立） |
+| `qcom-battery/smart_chg` | `0x340003`（=52%\|导航） | **`cur` 掉到 0**，vbus 抬到 9.07V，`usb.online` 保持 `1`，`smart_chg` 读回 `2` | 见 §3.4 | **真旁路** ✔ |
+
+交叉验证（Scene「充电统计」，13:29 截图）：电池功率 **0.00W**、34.4 ℃、3.896 V、电量不涨；功率曲线上出现一段笔直贴 0 的平台。
+
+### 3.1 掩码含义已确认
+
+| 写入 | 当前 52% 时的结果 | 说明 |
+|---|---|---|
+| `0x500003`（80%\|导航） | 继续充电 | 高 16 位=停充电量，52% < 80% 不停 |
+| `0x340003`（52%\|导航） | 立刻停充 | 到位即停 |
+
+### 3.2 两个必须知道的坑
+
+1. **读回值会被驱动归一化**：写 `0x340003` 读回 `2`，写 `0x2` 读回 `0`。**绝不能拿"读回==写入"来校验生效**，只能看 `current_now`（接近 0 才算停充）。
+2. **清停充不是一步到位**：写 `0` 有时不生效（实测有一次写完仍是 `smart_chg=2`、`cur=0`）。可靠顺序是 **`0x2` → 等 8 秒 → `0`**，第二次写后 `cur` 才回到 `-2.84A`。也就是说"关"要做**两次写 + 回读电流确认**。
+
+### 3.3 拔插保持性（已实测）
+
+在 `smart_chg=0x340003` 生效状态下**拔线 → 等 3 秒 → 插回**，节点仍为 `2`、`cur≈0`、`vbus=9.06V`、电量停在 52% 不涨。
+→ **状态由充电驱动保持，拔插不会丢**。这就是官方"不用重申"的物理原因。
+（重启会复位：sysfs 值不落盘，`service.sh` 开机后要重写一次。）
+
+### 3.4 还原手册（务必写进模块的 off 分支和 uninstall）
+
+```sh
+# 停充/旁路：level<<16 | 3（3 = 导航模式 + 生效位）
+printf '0x%x\n' $(( (LEVEL << 16) | 3 )) > /sys/class/qcom-battery/smart_chg
+
+# 取消：先写 0x2，等 8 秒，再写 0；然后用电流确认真的恢复了
+echo 0x2 > /sys/class/qcom-battery/smart_chg ; sleep 8
+echo 0   > /sys/class/qcom-battery/smart_chg ; sleep 10
+# 确认：current_now < -300000（在充电）才算成功
+```
+
+**反例（千万别学 v1.1 的兜底）**：只写 `input_suspend=0` 不会解除 `smart_chg` 的停充；只写一次 `0` 也可能解不掉。
+
+---
+
+## 4. 模块代码问题清单（按严重度）
+
+| # | 位置 | 问题 | 后果 |
+|---|---|---|---|
+| 1 | `bg-detect.sh` L33-40 | 8 个候选节点在 K70 全不存在 | **功能为零**，`NODE` 永远空 |
+| 2 | `bg-detect.sh` L32-40 全局 | 候选表完全没有 `/sys/class/qcom-battery/*` | 即使修 8 条，仍是瞎猜 |
+| 3 | `bg-detect.sh` L59-60 | 只写一次、等 3 秒、看 `status`/`current`，判据里 `Charging && cur<50000` 也算成功 | HyperOS 会把 `status` 滞后上报，容易把"没生效"判成"生效"，进而 `NODE_OFF` 被写成错误值 |
+| 4 | `bg-lib.sh` L105-122 | `on_charger()` 优先看 `usb/online`，**旁路中若 online 掉 0 就判定"拔了充电器"** | `WANT=0` → 立刻 `apply_node off` → 用户看到"旁路开了又马上回充"，且每轮循环都抖 |
+| 5 | `bg-lib.sh` L124-133 | `apply_node()` 只看 `[ -w ]` + `echo` 返回码 | root 下 `-w` 恒真；写进只读/被忽略的节点也返回成功，`BP=1` 直接置位 → 状态造假 |
+| 6 | `bg-daemon.sh` L106-120 | 稳态每 `REASSERT_TICKS`（默认 2 tick≈6 s）无条件重写 | 与驱动状态机对打；若节点是 `smart_chg` 这类掩码位，反复写会清掉官方设的保护 |
+| 7 | `bg-daemon.sh` L19-26 | 启动只把 `BP=1` + `status=Charging` 判为失效 | 重启后 `bp_on=1`、硬件已复位但 `status` 恰好是 `Not charging`（没插电）时，`BP` 保持 1，UI 会显示"已接管"而实际没在旁路 |
+| 8 | `bg-ctl.sh` L80-95 | 通知栏/WebUI 的"恢复充电"把 `MODE` 写成 `force_off` | 用户点一下"恢复充电"，**自动模式就永久退出**了；下次到 80% 不会自己再开，用户会以为"又不灵了" |
+| 9 | `uninstall.sh` L20-25 | 兜底复位的是 `restricted_charging`/`battery_charging_enabled` 等在 K70 不存在/无效的节点 | 卸载后如果正在旁路且 `NODE` 记录丢失，**不会复位**，手机可能一直不充电 |
+| 10 | `State.java` `query()` | 注释说"App 可在 su 卡住时用 sysfs 兜底"，但 `Shell.cat()` 是**App 进程直接读** `/sys/class/power_supply/battery/*` | 这些是 `vendor_sysfs_battery_supply` 标签，shell 域实测已被拒，App 域同样读不到 → 兜底是死代码，`level/status` 会是空 |
+| 11 | `bg-lib.sh` L101 | `POWER` 取了绝对值 | 旁路中电池不充不放，显示 `0.00W`，用户无法区分"适配器在供电"和"什么都没发生" |
+| 12 | `bg-daemon.sh` L45-64 | 只有电量阈值，无温度维度 | 与官方 41 ℃ / 游戏场景那套没有对应；`Scene` 的温度旁路反而比模块完整 |
+
+另外：`test/test.sh` 的假 sysfs 里也是 `restricted_charging` 那套，所以本地自测全绿，上机全红——这解释了"没上机验证也看不出问题"。
+
+---
+
+## 5. 建议方案（按投入产出排序）
+
+### A. 删掉"input_suspend 当旁路"这条假设
+
+`input_suspend` 已实测为**断输入**（手机转吃电池，Scene 上表现为放电），不是旁路。任何以它为主线的实现都会出现"开了旁路但电量还在掉、温度不降"。它可以保留为"断充"档位（比如极端发热时彻底断电），但不能当 80% 旁路用。
+
+### B. 主线：`smart_chg` 官方停充位（已实测可用）
+
+```sh
+# 开（到 LEVEL% 停充，导航模式位）
+printf '0x%x\n' $(( (LEVEL << 16) | 3 )) > /sys/class/qcom-battery/smart_chg
+
+# 关（两步 + 回读确认）
+echo 0x2 > /sys/class/qcom-battery/smart_chg ; sleep 8
+echo 0   > /sys/class/qcom-battery/smart_chg ; sleep 10
+```
+
+要点：
+- **不需要 `REASSERT` 轮询**。状态由驱动保持，拔插不丢，只要在开机 / 插电事件后重写一次。
+- **校验只能看 `current_now`**（< 0 才算真的在充，≈0 才算停充），不能看 `status`（会滞后显示 Charging），也不能看读回值（会被归一化成 `2`/`0`）。
+- **卸载/退出必须走两步复位**，否则会留下"永远不充电"的状态——这比 v1.1 的坑更严重。
+- 阈值落点：`LEVEL` 用真实电量（默认 80）。写入时若当前电量已 ≥ LEVEL，会**立刻**停充；这正是想要的行为。
+
+### C. 备选：借道官方组件（最省事，最脆）
+
+```sh
+am broadcast -a miui.intent.action.ACTION_FULL_CHARGE_NAVIGATION \
+  --ez miui.intent.extra.FULL_CHARGER_NAVIGATION true
+```
+
+官方会自己判断"是否在充电 / 是否省电模式"，再写 `smart_chg`。但接收方是安全中心的**运行时注册**接收者，进程不在就收不到，且依赖 ROM 版本。只适合做兜底。
+
+---
+
+## 6. 下一步（已完成的打勾）
+
+- [x] 定论 5 个候选节点的真实语义（§3）
+- [x] 确认 `smart_chg` 掩码高位=停充电量（§3.1）
+- [x] 确认拔插后状态保持（§3.3）
+- [ ] 重启后是否复位（需要在 v1.2 里用 `service.sh` 兜，实测可延后）
+- [ ] v1.2 落地：`smart_chg` 主线 + 两步复位 + 电流校验 + 修掉 §4 那 12 条
+
+---
+
+## 附录 A · 本次用到的命令
+
+```sh
+# 只读巡检
+adb shell 'su -c "ls /sys/class/qcom-battery/"'
+adb shell 'su -c "ls -Z /sys/class/qcom-battery/input_suspend"'
+adb shell 'su -c "getprop persist.vendor.smartchg"'
+```adb shell 'su -c "ls /vendor/lib64/hw | grep -i micharge"'
+```
+
+## 附录 B · 反编译产物位置
+
+| 文件 | 说明 |
+|---|---|
+| `audit/apk/MIUISecurityCenter.apk` | 从 `/product/priv-app/MIUISecurityCenter/MIUISecurityCenter.apk` 原样提取（60 MB） |
+| `audit/apk/services.jar` `framework.jar` | 同机提取，用于交叉确认 `battery_input_suspended` / `Charging policy` |
+| `audit/vendor/micharge-impl.so` `micharge-service` | `vendor.xiaomi.hardware.micharge@1.0` HAL，来自 `/vendor/lib64/hw`、`/vendor/bin/hw` |
+| 反编译源码 | jadx 1.5.3，`md/g.java` `md/c.java` `md/o.java` `me/k.java` `me/y.java` `me/w.java` |
+
+*（jadx 已装到 `D:\Program\Android\tools\jadx`，JDK17 运行。）*
