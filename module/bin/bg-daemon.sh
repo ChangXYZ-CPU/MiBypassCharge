@@ -176,17 +176,18 @@ next_interval() {
   _p=$POLL
   [ "$_p" -ge 1 ] 2>/dev/null || _p=3
   [ "$_p" -gt 15 ] && _p=15
-  if [ "$ENABLED" != "1" ]; then IV=$((_p * 20)); return; fi   # 关闭：彻底闲着（改配置会 SIGUSR1 叫醒）
-  if [ "$ONCH" != "1" ]; then                                  # 没插电：只等"插上了"
+  # 插拔由 bg-watch.sh 负责即时唤醒，所以这里可以睡得比较沉（兜底而已）
+  if [ "$ENABLED" != "1" ]; then IV=$((_p * 20)); return; fi   # 关闭：60s
+  if [ "$ONCH" != "1" ]; then
     if [ "$MODE" = "force_on" ]; then IV=$((_p * 3)); else IV=$((_p * 20)); fi
-    return
+    return                                                     # 未插电：60s
   fi
-  if [ "$BP" = "1" ]; then IV=$((_p * 3)); return; fi          # 已在旁路：看补电、看拔线
+  if [ "$BP" = "1" ]; then IV=$((_p * 10)); return; fi         # 旁路中：30s
   if [ "$MODE" != "force_on" ]; then
     _d=$(( THRESHOLD_ON - LEVEL ))
-    [ "$_d" -le 3 ] 2>/dev/null && { IV=$_p; return; }          # 快到阈值：精确停
+    [ "$_d" -le 3 ] 2>/dev/null && { IV=$_p; return; }          # 快到阈值：3s 精确停
   fi
-  IV=$((_p * 5))                                               # 插着电、离阈值还远
+  IV=$((_p * 10))                                              # 插电中段：30s
 }
 
 while true; do
@@ -204,7 +205,7 @@ while true; do
   ONCH=0
   on_charger && ONCH=1
 
-  # 恢复值必须明显低于开启值
+    # 恢复值必须明显低于开启值
   if [ "$THRESHOLD_OFF" -ge "$THRESHOLD_ON" ] 2>/dev/null; then
     THRESHOLD_OFF=$((THRESHOLD_ON - 5))
   fi

@@ -26,8 +26,13 @@ if [ -f "$DATA/supervisor.pid" ]; then
   [ -n "$_o" ] && kill "$_o" 2>/dev/null
   sleep 1
 fi
+pkill -f "bypass_guard/bin/bg-watch.sh" 2>/dev/null
 pkill -f "bypass_guard/bin/bg-supervise.sh" 2>/dev/null
 pkill -f "bypass_guard/bin/bg-daemon.sh" 2>/dev/null
 sleep 1
 
+# 插拔监听器（logcat battery_status）：插拔时即时叫醒守护
+MODDIR="$MODDIR" sh "$MODDIR/bin/bg-watch.sh" >/dev/null 2>&1 &
+
+# 守护 + 看护
 MODDIR="$MODDIR" sh "$MODDIR/bin/bg-supervise.sh" >/dev/null 2>&1 &
