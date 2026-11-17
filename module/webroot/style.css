@@ -1,0 +1,287 @@
+:root{
+  --bg:#0a0a0c;
+  --card:#17171b;
+  --card2:#202027;
+  --line:#2a2a32;
+  --text:#f2f2f7;
+  --dim:#8b8b93;
+  --dim2:#5f5f68;
+  --blue:#3b82f6;
+  --blue2:#60a5fa;
+  --green:#30d158;
+  --orange:#ff9f0a;
+  --red:#ff453a;
+}
+
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+
+html,body{
+  margin:0;padding:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Noto Sans CJK SC",sans-serif;
+  font-size:15px;
+  -webkit-font-smoothing:antialiased;
+}
+
+.wrap{
+  max-width:520px;
+  margin:0 auto;
+  padding:20px 16px 40px;
+}
+
+/* ---------- 顶部 ---------- */
+.top{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:18px;
+}
+.brand{display:flex;align-items:center;gap:12px}
+.logo{
+  width:38px;height:38px;border-radius:12px;
+  background:linear-gradient(135deg,var(--blue),#1d4ed8);
+  position:relative;
+  box-shadow:0 6px 18px rgba(59,130,246,.35);
+}
+.logo::after{
+  content:"";position:absolute;inset:11px;
+  border:2px solid #fff;border-radius:50%;
+  border-right-color:transparent;
+}
+h1{font-size:19px;font-weight:650;margin:0;letter-spacing:.3px}
+.sub{margin:2px 0 0;font-size:12px;color:var(--dim)}
+
+.pill{
+  display:flex;align-items:center;gap:6px;
+  padding:6px 12px;border-radius:99px;
+  background:var(--card2);
+  font-size:12px;color:var(--dim);
+  border:1px solid var(--line);
+}
+.pill i{
+  width:7px;height:7px;border-radius:50%;background:var(--dim2);
+  display:block;
+}
+.pill.on{color:var(--blue2);border-color:rgba(59,130,246,.45);background:rgba(59,130,246,.12)}
+.pill.on i{background:var(--blue);box-shadow:0 0 8px var(--blue)}
+.pill.charging{color:#7ee2a0;border-color:rgba(48,209,88,.45);background:rgba(48,209,88,.12)}
+.pill.charging i{background:var(--green);box-shadow:0 0 8px var(--green)}
+.pill.warn{color:#ffbf5a;border-color:rgba(255,159,10,.45);background:rgba(255,159,10,.12)}
+.pill.warn i{background:var(--orange)}
+
+/* ---------- 卡片 ---------- */
+.card{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:20px;
+  padding:18px;
+  margin-bottom:14px;
+}
+
+/* ---------- 电量圆环 ---------- */
+.hero{padding:24px 18px 18px}
+.ring{
+  width:208px;height:208px;border-radius:50%;
+  margin:0 auto 16px;
+  display:grid;place-items:center;
+  /* conic-gradient 的 0deg 本来就在 12 点钟方向，再写 from -90deg 就跑到 9 点了 */
+  background:conic-gradient(
+      var(--ringColor,#3b82f6) calc(var(--p) * 1%),
+      #25252c 0);
+  transition:background .4s ease;
+  position:relative;
+}
+.ring-inner{
+  width:174px;height:174px;border-radius:50%;
+  background:var(--card);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:2px;
+}
+.pct{display:flex;align-items:flex-start;line-height:1}
+.pct span{font-size:46px;font-weight:700;letter-spacing:-1.5px}
+.pct em{font-size:17px;font-style:normal;color:var(--dim);margin:7px 0 0 3px}
+.state{
+  font-size:12.5px;color:var(--dim);
+  margin-top:6px;letter-spacing:.4px;
+}
+.hero-foot{
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  font-size:12.5px;color:var(--dim);
+}
+.hero-foot .dot{width:3px;height:3px;border-radius:50%;background:var(--dim2)}
+
+/* ---------- 指标 ---------- */
+.metrics{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:1px;
+  background:var(--line);
+  padding:0;
+  overflow:hidden;
+}
+.m{
+  background:var(--card);
+  padding:16px 18px;
+}
+.m label{font-size:11.5px;color:var(--dim);letter-spacing:.3px}
+.m .v{display:flex;align-items:baseline;gap:3px;margin-top:6px}
+.m .v b{font-size:22px;font-weight:650;letter-spacing:-.5px}
+.m .v i{font-size:11.5px;color:var(--dim);font-style:normal}
+
+/* ---------- 行 / 开关 ---------- */
+.row{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.rowtext .k{font-size:15px;font-weight:550}
+.rowtext .d{font-size:12px;color:var(--dim);margin-top:3px}
+.divider{height:1px;background:var(--line);margin:16px -18px}
+
+.switch{position:relative;flex:0 0 auto;width:50px;height:30px;display:block}
+.switch input{position:absolute;opacity:0;width:0;height:0}
+.track{
+  position:absolute;inset:0;border-radius:99px;
+  background:#33333c;transition:background .22s;
+}
+.track::after{
+  content:"";position:absolute;top:3px;left:3px;
+  width:24px;height:24px;border-radius:50%;
+  background:#fff;transition:transform .22s;
+  box-shadow:0 2px 6px rgba(0,0,0,.35);
+}
+.switch input:checked + .track{background:var(--blue)}
+.switch input:checked + .track::after{transform:translateX(20px)}
+
+/* ---------- 分段控件 ---------- */
+.segs{
+  display:flex;gap:4px;margin-top:12px;
+  background:var(--card2);border-radius:12px;padding:4px;
+}
+.segs button{
+  flex:1;border:0;background:transparent;
+  color:var(--dim);font-size:13px;
+  padding:9px 4px;border-radius:9px;
+  font-family:inherit;cursor:pointer;
+  transition:background .18s,color .18s;
+}
+.segs button.on{background:var(--blue);color:#fff;font-weight:550}
+
+/* ---------- 滑块 ---------- */
+.slabel{
+  display:flex;align-items:center;justify-content:space-between;
+  font-size:13.5px;color:var(--dim);
+}
+.slabel b{color:var(--text);font-size:15px;font-weight:600}
+.slabel.mt{margin-top:20px}
+
+input[type=range]{
+  -webkit-appearance:none;
+  width:100%;height:28px;background:transparent;margin:8px 0 0;
+}
+input[type=range]::-webkit-slider-runnable-track{
+  height:4px;border-radius:2px;background:#33333c;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;
+  width:22px;height:22px;border-radius:50%;
+  background:#fff;margin-top:-9px;
+  box-shadow:0 2px 8px rgba(0,0,0,.5);
+}
+input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:#33333c}
+input[type=range]::-moz-range-thumb{width:22px;height:22px;border:0;border-radius:50%;background:#fff}
+
+.hint{
+  font-size:11.5px;color:var(--dim2);
+  line-height:1.7;margin:12px 0 0;
+}
+
+/* ---------- 按钮 ---------- */
+.btns{display:flex;gap:10px}
+.btn{
+  flex:1;border:0;border-radius:14px;
+  padding:14px 10px;font-size:14.5px;font-weight:600;
+  font-family:inherit;cursor:pointer;
+  transition:transform .12s,background .18s;
+}
+.btn:active{transform:scale(.97)}
+.btn.primary{background:var(--blue);color:#fff}
+.btn.primary.active{background:var(--orange);color:#1a1200}
+.btn.ghost{background:var(--card2);color:var(--text);border:1px solid var(--line)}
+.btn.ghost.active{
+  background:rgba(255,159,10,.14);
+  color:#ffbf5a;
+  border-color:rgba(255,159,10,.42);
+}
+.btn[disabled]{opacity:.45;pointer-events:none}
+
+/* ---------- 信息 ---------- */
+.info{padding:8px 18px}
+.kv{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:12px;padding:11px 0;
+  border-bottom:1px solid var(--line);
+  font-size:13px;
+}
+.kv:last-child{border-bottom:0}
+.kv span{color:var(--dim);flex:0 0 auto}
+.kv code{
+  font-family:ui-monospace,Menlo,monospace;
+  font-size:11.5px;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  text-align:right;
+}
+
+/* ---------- 日志 ---------- */
+.loghead{
+  display:flex;align-items:center;justify-content:space-between;
+  font-size:12.5px;color:var(--dim);margin-bottom:10px;
+}
+.mini{
+  border:0;background:var(--card2);color:var(--dim);
+  font-size:11.5px;padding:5px 12px;border-radius:8px;
+  font-family:inherit;cursor:pointer;
+}
+pre#log{
+  margin:0;max-height:190px;overflow:auto;
+  font-family:ui-monospace,Menlo,monospace;
+  font-size:11px;line-height:1.7;color:#9a9aa3;
+  white-space:pre-wrap;word-break:break-all;
+}
+
+.foot p{
+  font-size:11px;color:var(--dim2);
+  line-height:1.7;text-align:center;margin:6px 8px 0;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-thumb{background:#3a3a44;border-radius:2px}
+
+/* 阈值数字输入框 */
+.thnum{
+  width:64px;height:30px;border:none;border-radius:8px;
+  background:rgba(255,255,255,.08);color:var(--fg,#f2f2f7);
+  font-size:16px;font-weight:700;text-align:center;
+  -moz-appearance:textfield;
+}
+.thnum::-webkit-outer-spin-button,
+.thnum::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.thnum:focus{outline:1px solid #3b82f6}
+
+/* 阈值步进器：− 数字 + */
+.stepper{display:flex;align-items:center;gap:8px}
+.step{
+  width:38px;height:38px;border:none;border-radius:12px;
+  background:rgba(255,255,255,.10);color:#f2f2f7;
+  font-size:20px;font-weight:600;line-height:1;
+}
+.step:active{background:rgba(255,255,255,.20)}
+.step:disabled{opacity:.35}
+.thwrap{display:flex;align-items:baseline;gap:2px}
+.thwrap i{font-style:normal;font-size:13px;color:var(--dim)}
+.thnum{
+  width:52px;height:38px;border:none;border-radius:10px;
+  background:rgba(255,255,255,.08);color:#f2f2f7;
+  font-size:18px;font-weight:700;text-align:center;
+  -moz-appearance:textfield;
+}
+.thnum::-webkit-outer-spin-button,
+.thnum::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.thnum:focus{outline:1px solid #3b82f6}
+.thnum:disabled{opacity:.4}

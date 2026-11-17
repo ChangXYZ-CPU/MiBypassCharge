@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>旁路供电</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <div class="logo"></div>
+      <div>
+        <h1>旁路供电</h1>
+        <p class="sub">K70 · sm8550</p>
+      </div>
+    </div>
+    <div class="pill" id="pill"><i></i><span id="pillText">连接中</span></div>
+  </header>
+
+  <section class="card hero">
+    <div class="ring" id="ring" style="--p:0">
+      <div class="ring-inner">
+        <div class="pct"><span id="level">--</span><em>%</em></div>
+        <div class="state" id="stateText">读取中</div>
+      </div>
+    </div>
+    <div class="hero-foot">
+      <span id="chargerText">检测中</span>
+      <span class="dot"></span>
+      <span id="modeText">自动</span>
+    </div>
+  </section>
+
+  <section class="card metrics">
+    <div class="m">
+      <label>电池功率</label>
+      <div class="v"><b id="power">--</b><i>W</i></div>
+    </div>
+    <div class="m">
+      <label>电压</label>
+      <div class="v"><b id="volt">--</b><i>V</i></div>
+    </div>
+    <div class="m">
+      <label>电池电流</label>
+      <div class="v"><b id="cur">--</b><i>mA</i></div>
+    </div>
+    <div class="m">
+      <label>温度</label>
+      <div class="v"><b id="temp">--</b><i>℃</i></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <div class="rowtext">
+        <div class="k">旁路供电</div>
+        <div class="d" id="swDesc">开：充到设定电量就停；关：完全不管，正常充电</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="enabled" checked>
+        <span class="track"></span>
+      </label>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <div class="rowtext">
+        <div class="k">充到多少停</div>
+        <div class="d">插电后充到该电量就停，低于它自动恢复</div>
+      </div>
+      <div class="stepper">
+        <button class="step" id="thMinus" type="button">−</button>
+        <b class="thwrap"><input id="thNum" class="thnum" type="number" min="40" max="100" step="1" value="80" inputmode="numeric"><i>%</i></b>
+        <button class="step" id="thPlus" type="button">+</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="btns">
+      <button class="btn primary" id="btnToggle">立即旁路</button>
+    </div>
+    <p class="hint" id="btnHint">点一下 = 立刻停充；再点一下 = 恢复充电。</p>
+  </section>
+
+  <section class="card info">
+    <div class="kv"><span>停充通道</span><code id="nodeText">--</code></div>
+    <div class="kv"><span>守护进程</span><code id="daemonText">--</code></div>
+  </section>
+
+  <section class="card">
+    <div class="loghead">
+      <span>运行日志</span>
+      <button class="mini" id="btnLog">刷新</button>
+    </div>
+    <pre id="log">--</pre>
+  </section>
+
+  <footer class="foot">
+    <p>仅适配 Redmi K70 / sm8550。停充走小米充电驱动的 smart_chg 官方位，效果以实际电流为准。</p>
+  </footer>
+
+</div>
+
+<script>
+/* 旁路供电 WebUI（单文件，无外链脚本，避免 WebView 缓存旧代码） */
+window.__BG_VER__ = "1.4";
+(function () {
+  'use strict';
+
+  var MOD = '/data/adb/modules/bypass_guard';
+  var DATA = '/data/adb/bypass_guard';
+  var CTL = 'sh ' + MOD + '/bin/bg-ctl.sh';
+
+  var state = {}, conf = {}, lastTs = 0, busy = false;
+
+  /* ---------------- 与 root 通信 ----------------
+     KSU v3.2.5：
+       String exec(cmd)            ← 只回最后一行，不能用来读文件
+       void   exec(cmd, cbName)    ← 回调拿完整 stdout（cbName 是全局函数名）
+     所以统一走两参 + 全局回调。 */
+  var seq = 0;
+  function sh(cmd) {
+    return new Promise(function (resolve) {
+      var k = window.ksu || window.KernelSU;
+      if (!k || typeof k.exec !== 'function') { resolve('__NOAPI__'); return; }
+      var name = '__bgcb' + (++seq), done = false;
+      function fin(v) {
+        if (done) return;
+        done = true;
+        try { delete window[name]; } catch (e) {}
+        resolve(v == null ? '' : String(v));
+      }
+      window[name] = function (errno, stdout) { fin(stdout || ''); };
+      try {
+        k.exec(cmd, name);
+        setTimeout(function () {
+          if (!done) {
+            var fb = '';
+            try { fb = String(k.exec(cmd) || ''); } catch (e) {}
+            fin(fb);
+          }
+        }, 20000);
+      } catch (e) { fin('__EXEC_ERR__'); }
+    });
+  }
+
+  function toast(_m) { /* 按用户要求关掉所有 toast 提示 */ }
+  function $(id) { return document.getElementById(id); }
+  function num(v, d) { var n = parseFloat(v); return isNaN(n) ? d : n; }
+
+  function parseKV(txt) {
+    var o = {};
+    (txt || '').split('\n').forEach(function (l) {
+      var i = l.indexOf('=');
+      if (i > 0) o[l.slice(0, i).trim()] = l.slice(i + 1).trim();
+    });
+    return o;
+  }
+
+  /* ---------------- 渲染 ---------------- */
+  function render() {
+    var lv = Math.max(0, Math.min(100, num(state.LEVEL, 0)));
+    var bpFlag = state.BP === '1';
+    var plugged = state.ON_CHARGER === '1';
+    var charging = /Charging/i.test(state.STATUS || '');
+    /* 只认电流：停充=电流≈0。BP 只是个记账标志，驱动补电时它会短暂失真 */
+    var stopped = Math.abs(num(state.CUR, 0)) < 120000;
+    var bp = bpFlag && stopped;
+
+    /* 状态判定顺序：有没有插电 > 是否旁路 > status
+       （旁路中 status 会滞后显示 Charging，不能拿它当充电依据） */
+    var st, pill, color;
+    if (!plugged) {
+      st = '未插电';
+      pill = '未插电';
+      color = '#4b4b55';
+    } else if (bp) {
+      st = '旁路直供中';
+      pill = '旁路中';
+      color = '#3b82f6';
+    } else if (bpFlag && charging) {
+      st = '补电中 · 到点自动停';
+      pill = '补电中';
+      color = '#30d158';
+    } else if (charging) {
+      st = '正在充电';
+      pill = '充电中';
+      color = '#30d158';
+    } else {
+      st = '已插电 · 未充电';
+      pill = '已插电';
+      color = '#ff9f0a';
+    }
+
+    var ring = $('ring');
+    ring.style.setProperty('--p', lv);
+    ring.style.setProperty('--ringColor', color);
+
+    $('level').textContent = lv ? lv : '--';
+    $('stateText').textContent = st;
+    $('pill').className = 'pill' + (!plugged ? '' : (bp ? ' on' : (charging ? ' charging' : ' warn')));
+    $('pillText').textContent = pill;
+
+    /* 功率、电流统一按「充电为正、放电为负」显示（和 Scene 一致） */
+    $('power').textContent = num(state.POWER, 0).toFixed(2);
+    $('volt').textContent = (num(state.VOL, 0) / 1e6).toFixed(3);
+    $('cur').textContent = Math.round(-num(state.CUR, 0) / 1000);
+    $('temp').textContent = (num(state.TMP, 0) / 10).toFixed(1);
+
+    var en = (state.ENABLED || conf.ENABLED || '1') !== '0';
+    if (!en) {
+      st = '旁路已关闭';
+      pill = '已关闭';
+      ring.style.setProperty('--ringColor', '#4b4b55');
+      $('pill').className = 'pill';
+    }
+    $('stateText').textContent = st;
+    $('pillText').textContent = pill;
+
+    var mode = state.MODE || conf.MODE || 'auto';
+    $('modeText').textContent = { auto: '自动', force_on: '手动旁路', force_off: '手动充电' }[mode] || '自动';
+    $('chargerText').textContent = plugged ? '已插电' : '未插电';
+
+    var btn = $('btnToggle');
+    btn.textContent = bpFlag ? '恢复充电' : '立即旁路';
+    btn.classList.toggle('primary', !bpFlag);
+    btn.disabled = !plugged || !en;
+
+    $('thNum').disabled = !en;
+    $('thMinus').disabled = !en;
+    $('thPlus').disabled = !en;
+    $('swDesc').textContent = en
+      ? '开：充到设定电量就停；关：完全不管，正常充电'
+      : '已关闭：不会停充，插多少充多少';
+
+    $('nodeText').textContent = ((state.BACKEND || conf.BACKEND) === 'input_suspend')
+      ? 'input_suspend（断充）' : 'smart_chg（官方位）';
+
+    var now = Math.floor(Date.now() / 1000);
+    var age = lastTs ? now - lastTs : 999;
+    var dv = $('daemonText');
+    if (age < 12) { dv.textContent = '运行中'; dv.style.color = '#30d158'; }
+    else { dv.textContent = '未响应'; dv.style.color = '#ff9f0a'; }
+  }
+
+  /* ---------------- 拉数据 ---------------- */
+  function refreshState() {
+    return sh('cat ' + DATA + '/state 2>/dev/null').then(function (txt) {
+      if (txt === '__NOAPI__') { $('stateText').textContent = '需要 KsuWebUI 环境'; return; }
+      if (txt === '__EXEC_ERR__') { $('stateText').textContent = 'JS 桥异常'; return; }
+      var o = parseKV(txt);
+      if (o.TS) { state = o; lastTs = num(o.TS, 0); render(); }
+      else { $('stateText').textContent = txt ? '状态文件异常' : '守护未运行'; }
+    });
+  }
+
+  function loadConf() {
+    return sh('cat ' + DATA + '/config.conf 2>/dev/null').then(function (txt) {
+      conf = parseKV(txt);
+      var on = num(conf.THRESHOLD_ON, 80);
+      $('enabled').checked = conf.ENABLED !== '0';
+      $('thNum').value = on;
+      render();
+    });
+  }
+
+  function loadLog() {
+    return sh(CTL + ' log 40 2>/dev/null').then(function (t) {
+      var el = $('log');
+      el.textContent = (t && t !== '__NOAPI__') ? t : '（无日志）';
+      el.scrollTop = el.scrollHeight;
+    });
+  }
+
+  /* ---------------- 交互 ---------------- */
+  function doToggle() {
+    if (busy) return;
+    busy = true;
+    var btn = $('btnToggle');
+    var old = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '请稍候…';
+    sh(CTL + ' toggle').then(function (r) {
+      if (/^ERR/.test((r || '').trim())) toast(r.trim().slice(4) || '操作失败');
+      return refreshState();
+    }).then(function () {
+      btn.textContent = old;
+      return loadLog();
+    }).then(function () {
+      busy = false;
+      render();
+    });
+  }
+
+  function bind() {
+    $('btnToggle').addEventListener('click', doToggle);
+    $('btnLog').addEventListener('click', loadLog);
+
+    $('enabled').addEventListener('change', function () {
+      var v = this.checked ? 1 : 0;
+      var self = this;
+      self.disabled = true;
+      sh(CTL + ' set ENABLED ' + v).then(function () {
+        toast(v ? '旁路已开启' : '旁路已关闭');
+        return loadConf();
+      }).then(function () { self.disabled = false; });
+    });
+
+    var numBox = $('thNum');
+
+    function applyThreshold(v) {
+      v = Math.max(40, Math.min(100, parseInt(v, 10) || 80));
+      numBox.value = v;
+      var off = Math.max(10, v - 10);
+      sh(CTL + ' set THRESHOLD_ON ' + v)
+        .then(function () { return sh(CTL + ' set THRESHOLD_OFF ' + off); })
+        .then(function () { toast('已设为充到 ' + v + '% 停'); return loadConf(); });
+    }
+
+    /* 只认「−/+」按钮和输入框回车，页面上下滑不会误改 */
+    $('thMinus').addEventListener('click', function () {
+      applyThreshold((parseInt(numBox.value, 10) || 80) - 5);
+    });
+    $('thPlus').addEventListener('click', function () {
+      applyThreshold((parseInt(numBox.value, 10) || 80) + 5);
+    });
+    numBox.addEventListener('change', function () { applyThreshold(this.value); });
+    numBox.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { this.blur(); applyThreshold(this.value); }
+    });
+  }
+
+  function boot() {
+    bind();
+    loadConf().then(refreshState).then(loadLog);
+    setInterval(refreshState, 3000);
+    setInterval(function () { if (!document.hidden) loadLog(); }, 9000);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+</script>
+</body>
+</html>
