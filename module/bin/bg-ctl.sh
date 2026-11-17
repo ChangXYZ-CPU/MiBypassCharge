@@ -157,14 +157,28 @@ case "$cmd" in
     ;;
 
   restart)
-    # 先停 supervisor，否则它 5 秒后又把旧守护拉起来，新旧两个打架
-    if [ -f "$DATA_DIR/supervisor.pid" ]; then
-      kill "$(cat "$DATA_DIR/supervisor.pid" 2>/dev/null)" 2>/dev/null
+    # 不要在这里杀 supervisor 再重新起：bg-ctl 是由 WebUI exec 拉起来的短命进程，
+    # 它 fork 的后台进程会随命令结束被一起清掉，结果就是守护没了。
+    # 正确做法：supervisor 活着时只杀守护，它 3 秒后自会拉起新的。
+    SPD=$(cat "$DATA_DIR/supervisor.pid" 2>/dev/null)
+    DPD=$(cat "$DATA_DIR/daemon.pid" 2>/dev/null)
+    alive=0
+    case "$SPD" in
+      ''|*[!0-9]*) : ;;
+      *)
+        [ -r "/proc/$SPD/cmdline" ] && \
+        case "$(tr '\0' ' ' < "/proc/$SPD/cmdline" 2>/dev/null)" in
+          *bg-supervise.sh*) alive=1 ;;
+        esac
+        ;;
+    esac
+    if [ "$alive" = "1" ]; then
+      [ -n "$DPD" ] && kill "$DPD" 2>/dev/null
+      echo "OK"
+      exit 0
     fi
-    pkill -f "bypass_guard/bin/bg-supervise.sh" 2>/dev/null
-    pkill -f "bypass_guard/bin/bg-daemon.sh" 2>/dev/null
-    sleep 1
-    MODDIR="$MODDIR" sh "$MODDIR/bin/bg-supervise.sh" >/dev/null 2>&1 &
+    # supervisor 确实不在了才重起；setsid 脱离当前进程组，避免随本命令退出被清掉
+    setsid "$MODDIR/bin/bg-supervise.sh" >/dev/null 2>&1 < /dev/null &
     sleep 1
     echo "OK"
     ;;
