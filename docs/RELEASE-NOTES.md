@@ -72,7 +72,7 @@ echo 0   > /sys/class/qcom-battery/smart_chg
 
 部分工程实践参考了 [bypass-charger](https://github.com/QiZhi-yi/bypass-charger)（v10.3.5）：
 `flock` 串行化写节点（含其记录的驱动死锁事故）、KernelSU 禁用检测、退出复位与 `trap EXIT` 兜底。
-停充节点与掩码来自对小米安全中心的独立逆向，实现不同。
+停充通道使用小米系统自带的 `smart_chg` 官方停充位。
 
 ## 许可
 
