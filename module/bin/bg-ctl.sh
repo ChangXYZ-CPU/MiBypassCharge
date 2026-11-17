@@ -22,6 +22,28 @@ batt_info
 ONCH=0
 on_charger && ONCH=1
 
+# 改完配置后按新配置校正一次停充位，不等守护醒来。
+# 原因：mksh 在 wait 子进程时用 sigsuspend，SIGUSR1 会被屏蔽，光靠信号不可靠。
+reconcile() {
+  _bp=$(read_bp)
+  if [ "$ENABLED" != "1" ] || [ "$MODE" = "force_off" ]; then
+    smart_clear; write_bp 0
+  elif [ "$MODE" = "force_on" ]; then
+    smart_set "$LEVEL"; write_bp 1
+  elif [ "$ONCH" = "1" ]; then
+    # 按"当前电量 vs 阈值"直接裁决，不走滞回区：
+    # 把阈值调到当前电量之上，就是想继续充，得把停充位松开。
+    if [ "$LEVEL" -ge "$THRESHOLD_ON" ] 2>/dev/null; then
+      smart_set "$THRESHOLD_ON"; write_bp 1
+    elif [ "$_bp" = "1" ]; then
+      smart_clear; write_bp 0
+    fi
+  fi
+  # 顺手叫一下守护（能醒更好，醒不了上面已经校正过了）
+  _dpid=$(cat "$DATA_DIR/daemon.pid" 2>/dev/null)
+  [ -n "$_dpid" ] && kill -USR1 "$_dpid" 2>/dev/null
+}
+
 cmd=$1
 
 case "$cmd" in
@@ -43,30 +65,10 @@ case "$cmd" in
       THRESHOLD_ON|THRESHOLD_OFF|POLL|ENABLED|MODE|NOTIFY|BACKEND|SMART_MODE|FALLBACK)
         set_key "$k" "$v"
         load_conf
-        # 改完立刻按新配置校正一次停充位，不等守护醒来。
-        # 原因：mksh 在 wait 子进程时用的是 sigsuspend，SIGUSR1 会被屏蔽，
-        # 光靠 kill -USR1 唤醒并不可靠（实测改回 ENABLED=1 后一直没停充）。
         case "$k" in
-          ENABLED|MODE|THRESHOLD_ON|THRESHOLD_OFF)
-            _bp=$(read_bp)
-            if [ "$ENABLED" != "1" ] || [ "$MODE" = "force_off" ]; then
-              smart_clear; write_bp 0
-            elif [ "$MODE" = "force_on" ]; then
-              smart_set "$LEVEL"; write_bp 1
-            elif [ "$ONCH" = "1" ]; then
-              # 用户改阈值后按"当前电量 vs 新阈值"直接裁决（不走滞回区）：
-              # 把阈值调高到当前电量之上，就是想继续充，得把停充位松开。
-              if [ "$LEVEL" -ge "$THRESHOLD_ON" ] 2>/dev/null; then
-                smart_set "$THRESHOLD_ON"; write_bp 1
-              elif [ "$_bp" = "1" ]; then
-                smart_clear; write_bp 0
-              fi
-            fi
-            ;;
+          ENABLED|MODE|THRESHOLD_ON|THRESHOLD_OFF) reconcile ;;
+          *) : ;;
         esac
-        # 顺手再叫一下守护（能醒更好，醒不了上面已经校正过了）
-        _dpid=$(cat "$DATA_DIR/daemon.pid" 2>/dev/null)
-        [ -n "$_dpid" ] && kill -USR1 "$_dpid" 2>/dev/null
         echo "OK"
         ;;
       *)
@@ -129,7 +131,8 @@ case "$cmd" in
 
   auto)
     set_key MODE auto
-    MODE=auto
+    load_conf
+    reconcile
     batt_info
     push_ui "已切回自动模式 · 电量 ${LEVEL}%"
     echo "OK"

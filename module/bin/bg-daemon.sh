@@ -7,7 +7,7 @@
 # 省电（v1.5+）：轮询间隔按场景自适应，不再死守 3 秒
 #   旁路中 / 快到阈值 → POLL（3s）   要精确停充、要发现拔线
 #   插着电、离阈值还远 → POLL×5（15s） 电量涨得慢
-#   没插电           → POLL×10（30s） 这时什么都做不了，只需发现"插上了"
+#   没插电           → POLL×20（60s） 这时什么都做不了，只需发现"插上了"
 #
 # 唤醒（v1.5+）：WebUI 改配置会发 SIGUSR1，nap 立刻被打断重新裁决，
 # 不用等睡满一个周期。
@@ -178,7 +178,7 @@ next_interval() {
   [ "$_p" -gt 15 ] && _p=15
   if [ "$ENABLED" != "1" ]; then IV=$((_p * 20)); return; fi   # 关闭：彻底闲着（改配置会 SIGUSR1 叫醒）
   if [ "$ONCH" != "1" ]; then                                  # 没插电：只等"插上了"
-    if [ "$MODE" = "force_on" ]; then IV=$((_p * 3)); else IV=$((_p * 10)); fi
+    if [ "$MODE" = "force_on" ]; then IV=$((_p * 3)); else IV=$((_p * 20)); fi
     return
   fi
   if [ "$BP" = "1" ]; then IV=$((_p * 3)); return; fi          # 已在旁路：看补电、看拔线

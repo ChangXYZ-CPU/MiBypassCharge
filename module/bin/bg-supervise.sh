@@ -29,5 +29,5 @@ echo $$ > "$DATA_DIR/supervisor.pid"
 
 while true; do
   MODDIR="$MODDIR" sh "$MODDIR/bin/bg-daemon.sh" >/dev/null 2>&1
-  sleep 5
+  sleep 3
 done
