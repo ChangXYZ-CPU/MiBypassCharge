@@ -4,7 +4,7 @@ KernelSU 模块：插上充电器后，电池充到设定电量就停止充电�
 停充走小米充电驱动的官方位 `smart_chg` —— 和安全中心「导航断充保护」同一条路，
 状态由驱动保持，拔插不丢，不需要周期性重写。
 
-- 机型：Redmi K70（`23113RKC6C` / `vermeer` / SM8550）
+- 机型：**已在 Redmi K70**（`23113RKC6C` / `vermeer` / SM8550）实测；见下方"可能的兼容设备"
 - 系统：HyperOS 2（实测 `2.0.205.0.VNKCNXM`，Android 15）
 - Root：**仅 KernelSU**（WebUI 依赖 `window.ksu`，不支持 Magisk / APatch）
 - 模块本身只有 root 脚本 + WebUI，**不安装任何 App**
@@ -74,6 +74,28 @@ bash build.sh                       # 生成 bypass-guard-v<版本>.zip
 插拔监听（可关）另占约 0.233% 单核。关掉它 + 把巡检调到 120 秒，
 就是本模块最省电的配置。详见 `docs/变更说明.md` §10–§14 的实测数据。
 
+## 可能的兼容设备（未测试）
+
+`smart_chg` 是小米/红米较新机型上普遍存在的充电保护位，K70 之后的很多高通平台机型
+大概率也有同样的接口。满足以下条件的设备**理论上可能可用**：
+
+- KernelSU v3.x（WebUI 依赖 `window.ksu`）
+- 高通平台，`/sys/class/qcom-battery/smart_chg` 节点存在且可写
+- `getprop persist.vendor.smartchg` 的值含 `bit1`（支持导航断充）
+- HyperOS / MIUI 且系统里确实有「导航断充保护」功能
+
+自检（root 终端）：
+
+```sh
+ls -l /sys/class/qcom-battery/smart_chg
+getprop persist.vendor.smartchg        # 含 bit1 即支持
+```
+
+> **重要：作者本人只有一台 K70，没有其他任何设备可以测试。**
+> 上述"可能兼容"只是基于接口存在性的推断，**不代表已验证，更不能保障安全**。
+> 在其他机型上使用属于你自己的测试行为，请先读 `DISCLAIMER.md`，
+> 并确认你会执行救急命令或恢复出厂设置。
+
 ## 注意
 
 - **更新 WebUI 后界面没变化**：KernelSU 的 WebView 有缓存。光退出重进不够，
@@ -93,6 +115,13 @@ bash build.sh                       # 生成 bypass-guard-v<版本>.zip
 
 见 [DISCLAIMER.md](DISCLAIMER.md)。简要说：本项目修改系统充电行为，**可能导致设备无法充电**，
 请自行承担风险并保留救急手段；与小米、KernelSU 及任何厂商无关。
+
+## 致谢
+
+部分工程实践参考了开源项目 [bypass-charger](https://github.com/QiZhi-yi/bypass-charger)
+（v10.3.5），具体包括：用 `flock` 串行化写充电节点（它记录过并发写导致厂商充电驱动死锁的事故）、
+KernelSU 禁用状态检测、退出时复位充电、`trap EXIT` 兜底。停充节点与阈值掩码则来自对
+小米安全中心「导航断充保护」的独立逆向分析，与其实现不同。详见 `docs/变更说明.md` §10.3。
 
 ## 许可
 

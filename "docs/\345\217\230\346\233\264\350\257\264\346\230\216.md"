@@ -197,7 +197,8 @@ v1.5 把全部读取改成 shell 内建 `read < 文件`（只走 open/read/close
 
 ### 10.3 抄了开源项目 bypass-charger v10.3.5 的四条工程实践
 
-对照 `github.com/QiZhi-yi/bypass-charger`（v10.3.5）：
+对照 `github.com/QiZhi-yi/bypass-charger`（v10.3.5）。该仓库未声明标准开源协议（GitHub 显示
+`NOASSERTION`），因此在此明确标注来源：下面标"已抄"的四条是实质参考，非独立原创。
 
 | 项           | bypass-charger                                        | 我们                   |
 | ----------- | ----------------------------------------------------- | -------------------- |
