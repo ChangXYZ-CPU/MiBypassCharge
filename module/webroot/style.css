@@ -13,7 +13,13 @@
   --red:#ff453a;
 }
 
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;
+  /* 整页禁止长按选中：上下滑动时不会误选文字、不会弹出复制菜单 */
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+
+/* 只放行这两类：可编辑的输入框、运行日志。其余文字都不可选中 */
+input,textarea,pre#log{
+  -webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
 
 html,body{
   margin:0;padding:0;

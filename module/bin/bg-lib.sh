@@ -1,10 +1,18 @@
 #!/system/bin/sh
-# bg-lib.sh — 旁路供电守护 v1.2 公共函数库
+# bg-lib.sh — 旁路供电守护公共函数库
 #
-# v1.2 核心改动：不再往"输入开关"上写 1，而是走小米充电驱动的官方停充位
+# 停充走小米充电驱动的官方位：
 #   /sys/class/qcom-battery/smart_chg = 0x{电量<<16 | 标志位}
 #   标志位 0x3 = 导航模式 + 生效位（安全中心「导航断充保护」用的就是这个）
 # 驱动自己保持该状态（拔插都不丢），所以稳态下不需要周期重申。
+#
+# 省电要点（v1.5）：每一轮都别再 fork 进程
+#   实测（K70 / HZ=100，N=100 次）：
+#     cat 一个属性           34 ms   ← 其中 26ms 只是 exec toybox cat
+#     cat 6 个属性           39 ms
+#     cat battery/uevent     72 ms   ← show 全量，反而更贵
+#     read < 文件（内建）     1-3 ms  ← 只走 open/read/close，不 exec
+#   所以全部改成 read < file，一轮 6 个属性 ~10ms，是原来的 1/15
 
 MODDIR=${MODDIR:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}
 SYS=${SYSFS_ROOT:-}
@@ -18,13 +26,14 @@ mkdir -p "$DATA_DIR" 2>/dev/null
 
 # ---- 节点 ----
 QB=$SYS/sys/class/qcom-battery
+PS=$SYS/sys/class/power_supply
 SMART_CHG=$QB/smart_chg
 INPUT_SUSPEND=$QB/input_suspend
 
 DEFAULT_CONF='ENABLED=1
 MODE=auto
 THRESHOLD_ON=80
-THRESHOLD_OFF=70
+THRESHOLD_OFF=75
 POLL=3
 BACKEND=smartchg
 SMART_MODE=3
@@ -47,17 +56,17 @@ load_conf() {
 }
 
 save_conf() {
-  cat > "$CONF" <<EOF
-ENABLED=$ENABLED
-MODE=$MODE
-THRESHOLD_ON=$THRESHOLD_ON
-THRESHOLD_OFF=$THRESHOLD_OFF
-POLL=$POLL
-BACKEND=$BACKEND
-SMART_MODE=$SMART_MODE
-FALLBACK=$FALLBACK
-NOTIFY=$NOTIFY
-EOF
+  {
+    echo "ENABLED=$ENABLED"
+    echo "MODE=$MODE"
+    echo "THRESHOLD_ON=$THRESHOLD_ON"
+    echo "THRESHOLD_OFF=$THRESHOLD_OFF"
+    echo "POLL=$POLL"
+    echo "BACKEND=$BACKEND"
+    echo "SMART_MODE=$SMART_MODE"
+    echo "FALLBACK=$FALLBACK"
+    echo "NOTIFY=$NOTIFY"
+  } > "$CONF"
 }
 
 set_key() {
@@ -69,79 +78,136 @@ set_key() {
   fi
 }
 
+# 日志：每 40 条才检查一次行数（原来每条都 wc -l，白花 fork）
+LOGN=0
 logi() {
   echo "$(date '+%m-%d %H:%M:%S') $*" >> "$LOGFILE" 2>/dev/null
-  if [ -f "$LOGFILE" ]; then
-    n=$(wc -l < "$LOGFILE" 2>/dev/null)
-    if [ "${n:-0}" -gt 400 ]; then
-      tail -200 "$LOGFILE" > "$LOGFILE.tmp" 2>/dev/null && mv "$LOGFILE.tmp" "$LOGFILE"
-    fi
+  LOGN=$((LOGN + 1))
+  [ $((LOGN % 40)) -eq 0 ] || return 0
+  n=$(wc -l < "$LOGFILE" 2>/dev/null)
+  if [ "${n:-0}" -gt 400 ]; then
+    tail -200 "$LOGFILE" > "$LOGFILE.tmp" 2>/dev/null && mv "$LOGFILE.tmp" "$LOGFILE"
   fi
 }
 
 rd() { cat "$1" 2>/dev/null; }
 
+# 只认数字（允许前导 -），其它一律当 0。
+# 结果写进全局 _N，不要用 $(chk ...) —— 命令替换本身 fork 一次，就把 read 省下的全吃回去了。
+# 另外必须用 printf：echo "-154000" 在某些 shell 里会被当成选项，吐空串。
+chk_set() {
+  case "$1" in
+    ''|-) _N=0 ;;
+    -*) _t=${1#-}
+        case "$_t" in ''|*[!0-9]*) _N=0 ;; *) _N="-$_t" ;; esac ;;
+    *[!0-9]*) _N=0 ;;
+    *) _N=$1 ;;
+  esac
+}
+
+# 电池目录只找一次（原来每 tick 遍历 power_supply/* 并 cat type）
 find_bat() {
+  if [ -n "$BAT_DIR" ] && [ -r "$BAT_DIR/uevent" ]; then return 0; fi
   BAT_DIR=""
-  for d in $SYS/sys/class/power_supply/*; do
-    [ -f "$d/type" ] || continue
-    if [ "$(rd "$d/type")" = "Battery" ]; then
-      BAT_DIR=$d
-      break
-    fi
+  for d in "$PS"/*; do
+    [ -r "$d/type" ] || continue
+    if [ "$(rd "$d/type")" = "Battery" ]; then BAT_DIR=$d; break; fi
   done
-  [ -z "$BAT_DIR" ] && BAT_DIR=$SYS/sys/class/power_supply/battery
+  [ -z "$BAT_DIR" ] && BAT_DIR=$PS/battery
 }
 
-absnum() {   # 去符号、去非数字
-  v=${1#-}
-  case "$v" in ''|*[!0-9]*) echo 999999999 ;; *) echo "$v" ;; esac
+# 功率：VOL(µV) × CUR(µA) / 1e12 = W
+# 设备上的 sh 是 32 位算术（实测 4119000*403000 溢出成 2099623744），
+# 所以先降到 mV / mA 再乘，最大 20000×12000=2.4e8，安全。
+# mV×mA = µW；0.01W = 10000µW，四舍五入到 0.01W。
+# current_now 负=充电，乘 -1 后：充电为正、放电为负（和 Scene 一致）
+calc_power() {
+  chk_set "$VOL"; _v=$_N
+  chk_set "$CUR"; _c=$_N
+  _v=$(( _v / 1000 ))
+  _c=$(( _c / 1000 ))
+  _p=$(( _v * _c * -1 ))
+  _neg=""
+  if [ "$_p" -lt 0 ]; then _neg="-"; _p=$(( _p * -1 )); fi
+  _q=$(( (_p + 5000) / 10000 ))
+  _r=$(( _q % 100 ))
+  [ "$_r" -lt 10 ] && _r="0$_r"
+  POWER="$_neg$(( _q / 100 )).$_r"
 }
 
+# 全部用 shell 内建 read + 重定向，不 fork（见文件头的实测数据）
 batt_info() {
-  LEVEL=$(rd "$BAT_DIR/capacity");  [ -z "$LEVEL" ]  && LEVEL=0
-  STATUS=$(rd "$BAT_DIR/status");   [ -z "$STATUS" ] && STATUS=Unknown
-  CUR=$(rd "$BAT_DIR/current_now"); [ -z "$CUR" ]    && CUR=0
-  VOL=$(rd "$BAT_DIR/voltage_now"); [ -z "$VOL" ]    && VOL=0
-  TMP=$(rd "$BAT_DIR/temp");        [ -z "$TMP" ]    && TMP=0
-  # CUR 带符号：负=充电，正=放电/停充。POWER 只用于显示
-  # 带符号：充电为正、放电（没插电）为负。current_now 负=充电，所以要取反
-  POWER=$(awk -v v="$VOL" -v c="$CUR" 'BEGIN{printf "%.2f", -(v*c)/1e12}' 2>/dev/null)
-  [ -z "$POWER" ] && POWER=0.00
+  LEVEL=""; STATUS=""; CUR=""; VOL=""; TMP=""
+  read -r LEVEL  2>/dev/null < "$BAT_DIR/capacity"
+  read -r STATUS 2>/dev/null < "$BAT_DIR/status"
+  read -r CUR    2>/dev/null < "$BAT_DIR/current_now"
+  read -r VOL    2>/dev/null < "$BAT_DIR/voltage_now"
+  read -r TMP    2>/dev/null < "$BAT_DIR/temp"
+
+  chk_set "$LEVEL"; LEVEL=$_N
+  STATUS=${STATUS:-Unknown}
+  chk_set "$CUR"; CUR=$_N
+  chk_set "$VOL"; VOL=$_N
+  chk_set "$TMP"; TMP=$_N
+  calc_power
 }
 
 # 停充判定：电池电流接近 0
 is_stopped() {
-  c=$(absnum "$CUR")
-  [ "$c" -lt 120000 ]
+  _c=${CUR#-}
+  case "$_c" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$_c" -lt 120000 ]
 }
 
 # 充电判定：明显在充电
 is_charging() {
   case "$CUR" in
-    -*) c=$(absnum "$CUR"); [ "$c" -gt 300000 ] ;;
+    -*) _c=${CUR#-}; case "$_c" in ''|*[!0-9]*) return 1 ;; esac
+        [ "$_c" -gt 300000 ] ;;
     *) return 1 ;;
   esac
 }
 
+# 是否插着电：内建 read，usb.online 一次 1ms，再靠 VBUS / 状态字兜底
 on_charger() {
-  # 1) usb/ac/wireless 的 online|present
-  for p in usb ac wireless dc; do
-    for f in online present; do
-      ff=$SYS/sys/class/power_supply/$p/$f
-      if [ -f "$ff" ]; then
-        [ "$(rd "$ff")" = "1" ] && return 0
-      fi
-    done
+  _on=""
+  read -r _on 2>/dev/null < "$PS/usb/online"
+  [ "$_on" = "1" ] && return 0
+
+  # 旁路中 usb.online 偶尔短暂为 0，但 VBUS 还在
+  _uv=""
+  read -r _uv 2>/dev/null < "$PS/usb/voltage_now"
+  chk_set "$_uv"
+  [ "$_N" -gt 4000000 ] && return 0
+
+  # 无线充 / 其它口兜底（K70 没有，留给别的机型；文件不存在时 read 直接失败，成本极低）
+  for _p in ac wireless dc; do
+    _on=""
+    read -r _on 2>/dev/null < "$PS/$_p/online"
+    [ "$_on" = "1" ] && return 0
   done
-  # 2) VBUS 电压兜底（旁路中 online 偶尔短暂为 0，但 VBUS 还在）
-  v=$(absnum "$(rd "$SYS/sys/class/power_supply/usb/voltage_now")")
-  [ "$v" -gt 4000000 ] && return 0
-  # 3) 状态字兜底
+
   case "$STATUS" in
     Charging*|Full*|"Not charging") return 0 ;;
   esac
   return 1
+}
+
+# ---------------- 节点写入串行化 ----------------
+# 来自开源项目 bypass-charger v10.3.5 记录的真实事故（2026-11-10）：
+# 守护进程和 WebUI 同时写同一个充电节点，触发厂商充电驱动内部死锁，
+# 进程卡在 D 状态、杀不掉、插电不充。所以写节点一律 flock 串行化。
+# 用 -n 非阻塞：拿不到锁就放弃本次写入（下一轮再试），绝不阻塞等锁。
+LOCKFILE=$DATA_DIR/.node_lock
+
+# $1=节点 $2=值
+write_node() {
+  [ -z "$1" ] && return 1
+  [ ! -e "$1" ] && return 1
+  (
+    flock -n 9 || return 1
+    echo "$2" > "$1" 2>/dev/null
+  ) 9>"$LOCKFILE"
 }
 
 # ---------------- smart_chg 官方停充位 ----------------
@@ -152,16 +218,17 @@ smart_set() {          # $1 = 停充电量
   smart_present || return 1
   v=$(printf '0x%x' $(( ($1 << 16) | SMART_MODE )) 2>/dev/null)
   [ -z "$v" ] && return 1
-  echo "$v" > "$SMART_CHG" 2>/dev/null || return 1
+  write_node "$SMART_CHG" "$v" || return 1
   logi "smart_set $v (level=$1 mode=$SMART_MODE)"
   return 0
 }
 
 smart_clear() {        # 实测：只写 0 有时解不掉，必须先 0x2 再 0
   smart_present || return 1
-  echo 0x2 > "$SMART_CHG" 2>/dev/null
+  # 两次写之间要放锁，否则别的进程这三秒全被挡住
+  write_node "$SMART_CHG" 0x2
   sleep "${CLEAR_GAP:-3}"
-  echo 0 > "$SMART_CHG" 2>/dev/null
+  write_node "$SMART_CHG" 0
   logi "smart_clear done"
   return 0
 }
@@ -183,21 +250,44 @@ smart_target_level() {
 read_bp() { if [ -f "$BPFILE" ]; then cat "$BPFILE" 2>/dev/null; else echo 0; fi; }
 write_bp() { echo "$1" > "$BPFILE" 2>/dev/null; }
 
+# 守护是否活着：不能只看 kill -0（pid 会被复用），要认 /proc/<pid>/cmdline
+daemon_alive() {
+  [ -f "$DATA_DIR/daemon.pid" ] || return 1
+  _d=$(cat "$DATA_DIR/daemon.pid" 2>/dev/null)
+  [ -n "$_d" ] || return 1
+  [ -r "/proc/$_d/cmdline" ] || return 1
+  case "$(tr '\0' ' ' < "/proc/$_d/cmdline" 2>/dev/null)" in
+    *bg-daemon.sh*) return 0 ;;
+  esac
+  return 1
+}
+
+# 输出状态 KV 到 stdout（WebUI 的 status 直接用它，拿到的是实时值，不是旧文件）
+print_state() {
+  echo "LEVEL=$LEVEL"
+  echo "STATUS=$STATUS"
+  echo "CUR=$CUR"
+  echo "VOL=$VOL"
+  echo "TMP=$TMP"
+  echo "POWER=$POWER"
+  echo "BP=$BP"
+  echo "MODE=$MODE"
+  echo "ENABLED=$ENABLED"
+  echo "ON_CHARGER=$ONCH"
+  echo "BACKEND=$BACKEND"
+  [ "$1" = "ts" ] && echo "TS=$(date +%s)"
+  return 0
+}
+
+# 只在「看得见的状态」变化时才写盘。
+# 电流/电压/温度不参与比较：它们一直在抖，每轮都写等于每轮多 fork 一次 date，
+# 而界面读的是 bg-ctl status 的实时值，本来就不依赖这个文件。
+STATE_SIG=""
 save_state() {
-  cat > "$STATE" <<EOF
-LEVEL=$LEVEL
-STATUS=$STATUS
-CUR=$CUR
-VOL=$VOL
-TMP=$TMP
-POWER=$POWER
-BP=$BP
-MODE=$MODE
-ENABLED=$ENABLED
-ON_CHARGER=$ONCH
-BACKEND=$BACKEND
-TS=$(date +%s)
-EOF
+  _sig="$LEVEL|$STATUS|$BP|$MODE|$ENABLED|$ONCH|$BACKEND"
+  [ "$_sig" = "$STATE_SIG" ] && return 0
+  STATE_SIG=$_sig
+  print_state ts > "$STATE"
 }
 
 notify() {
@@ -205,8 +295,7 @@ notify() {
   cmd notification post -S bigtext -t "旁路供电守护" bypass_guard "$1" >/dev/null 2>&1
 }
 
-# ---------------- 通知（可选，默认关） ----------------
-# 没有壳 App 了，这里只做"纯文本通知"，NOTIFY=1 时才发。
+# 没有壳 App 了，这里只做"纯文本通知"，NOTIFY=1 时才发
 push_ui() {
   [ "$NOTIFY" = "1" ] || return 0
   notify "$1"

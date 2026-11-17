@@ -1,5 +1,8 @@
 #!/system/bin/sh
-# service.sh — 开机启动守护进程
+# service.sh — 开机拉起守护
+#
+# 守护本体交给 bg-supervise.sh 看护：它退出就重启，活着时零唤醒。
+# 原来这里是「每 30 秒 pgrep 一次」，既多一层定时唤醒，pgrep -f 还会误判。
 
 MODDIR=${0%/*}
 DATA=/data/adb/bypass_guard
@@ -17,24 +20,14 @@ done
 # 再多等一会儿，等充电驱动初始化完
 sleep 8
 
-# 防止重复启动
-if [ -f "$DATA/daemon.pid" ]; then
-  old=$(cat "$DATA/daemon.pid" 2>/dev/null)
-  if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
-    exit 0
-  fi
+# 清掉上一次残留（重启后 pid 文件还在的情况）
+if [ -f "$DATA/supervisor.pid" ]; then
+  _o=$(cat "$DATA/supervisor.pid" 2>/dev/null)
+  [ -n "$_o" ] && kill "$_o" 2>/dev/null
+  sleep 1
 fi
+pkill -f "bypass_guard/bin/bg-supervise.sh" 2>/dev/null
+pkill -f "bypass_guard/bin/bg-daemon.sh" 2>/dev/null
+sleep 1
 
-MODDIR="$MODDIR" sh "$MODDIR/bin/bg-daemon.sh" >/dev/null 2>&1 &
-echo $! > "$DATA/daemon.pid"
-
-# 看门狗：daemon 意外退出时自动拉起
-(
-  while true; do
-    sleep 30
-    if ! pgrep -f "bg-daemon.sh" >/dev/null 2>&1; then
-      MODDIR="$MODDIR" sh "$MODDIR/bin/bg-daemon.sh" >/dev/null 2>&1 &
-      echo $! > "$DATA/daemon.pid"
-    fi
-  done
-) >/dev/null 2>&1 &
+MODDIR="$MODDIR" sh "$MODDIR/bin/bg-supervise.sh" >/dev/null 2>&1 &

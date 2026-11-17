@@ -1,17 +1,16 @@
 #!/system/bin/sh
-# bg-ctl.sh — 控制接口（WebUI / 通知按钮 / action.sh 调用）
+# bg-ctl.sh — 控制接口（WebUI 调用）
 #
-#   status            输出实时状态
+#   status            输出实时状态（直接读 sysfs，不是旧文件）
 #   get               输出配置
 #   set KEY VALUE     改配置
 #   on                强制旁路（MODE=force_on）
 #   off               强制充电（MODE=force_off）
-#   resume            只恢复充电，然后回到自动（通知栏那个按钮用这个）
+#   resume            只恢复充电，然后回到自动
 #   auto              交回自动
 #   toggle            在旁路与恢复之间切换
 #   log [n]           日志尾部
 #   restart           重启守护
-#   app [install]     壳 App 状态
 
 MODDIR=${MODDIR:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}
 . "$MODDIR/bin/bg-lib.sh"
@@ -27,8 +26,10 @@ cmd=$1
 
 case "$cmd" in
   status)
+    # 实时读，界面数据不受守护轮询间隔影响
     BP=$(read_bp)
-    if [ -f "$STATE" ]; then cat "$STATE"; else echo "NO_STATE"; fi
+    print_state ts
+    if daemon_alive; then echo "DAEMON=1"; else echo "DAEMON=0"; fi
     ;;
 
   get)
@@ -41,6 +42,9 @@ case "$cmd" in
     case "$k" in
       THRESHOLD_ON|THRESHOLD_OFF|POLL|ENABLED|MODE|NOTIFY|BACKEND|SMART_MODE|FALLBACK)
         set_key "$k" "$v"
+        # 守护可能正睡 9/21 秒，叫醒它立刻按新配置重新裁决
+        _dpid=$(cat "$DATA_DIR/daemon.pid" 2>/dev/null)
+        [ -n "$_dpid" ] && kill -USR1 "$_dpid" 2>/dev/null
         echo "OK"
         ;;
       *)
@@ -89,10 +93,13 @@ case "$cmd" in
     ;;
 
   resume)
+    # 必须用 force_off，不能回 auto：
+    # auto 下"电量 ≥ 阈值就停"，80% 时点恢复充电会被下一轮立刻又停掉，按钮等于没用。
+    # force_off 会一直充，充满 100% 由守护自动切回 auto（见 bg-daemon.sh）。
     smart_clear
     [ -w "$INPUT_SUSPEND" ] && echo 0 > "$INPUT_SUSPEND" 2>/dev/null
     write_bp 0
-    set_key MODE auto; MODE=auto
+    set_key MODE force_off; MODE=force_off
     sleep 1; batt_info
     push_ui "已恢复充电 · 电量 ${LEVEL}%"
     echo "OK"
@@ -125,14 +132,15 @@ case "$cmd" in
     ;;
 
   restart)
-    if [ -f "$DATA_DIR/daemon.pid" ]; then
-      kill "$(cat "$DATA_DIR/daemon.pid")" 2>/dev/null
-      sleep 1
+    # 先停 supervisor，否则它 5 秒后又把旧守护拉起来，新旧两个打架
+    if [ -f "$DATA_DIR/supervisor.pid" ]; then
+      kill "$(cat "$DATA_DIR/supervisor.pid" 2>/dev/null)" 2>/dev/null
     fi
-    pkill -f bg-daemon.sh 2>/dev/null
+    pkill -f "bypass_guard/bin/bg-supervise.sh" 2>/dev/null
+    pkill -f "bypass_guard/bin/bg-daemon.sh" 2>/dev/null
     sleep 1
-    MODDIR="$MODDIR" sh "$MODDIR/bin/bg-daemon.sh" >/dev/null 2>&1 &
-    echo $! > "$DATA_DIR/daemon.pid"
+    MODDIR="$MODDIR" sh "$MODDIR/bin/bg-supervise.sh" >/dev/null 2>&1 &
+    sleep 1
     echo "OK"
     ;;
 

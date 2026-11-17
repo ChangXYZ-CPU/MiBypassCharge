@@ -13,17 +13,18 @@ KernelSU 模块：插上充电器后，电池充到设定电量就停止充电�
 ```
 module/           模块本体（可直接打包成 zip 刷入）
   META-INF/       KernelSU 安装脚本入口
-  bin/bg-lib.sh   公共函数：节点读写、电池信息、smart_chg 操作
-  bin/bg-daemon.sh 守护主循环：按阈值开关旁路、校验电流、失败退避
+  bin/bg-lib.sh   公共函数：内建 read 读电池、flock 写节点、smart_chg 操作
+  bin/bg-daemon.sh 守护主循环：自适应轮询、阈值滞回、SIGUSR1 唤醒、退出复位
+  bin/bg-supervise.sh 看护循环：守护退出就重启，活着时零唤醒
   bin/bg-ctl.sh   控制接口：status / on / resume / off / auto / toggle / set / log / restart
   webroot/        WebUI 单页（HTML 内联 JS，无外链，避免 WebView 缓存旧代码）
   module.prop     模块信息
   customize.sh    安装时权限设置
-  service.sh      开机拉起守护 + 看门狗
+  service.sh      开机拉起看护循环
   uninstall.sh    卸载时两步复位 smart_chg，保证不会留下"永远不充电"
 
 docs/
-  变更说明.md     从 v1.1 到 v1.4 改了什么、实测数据、已知限制
+  变更说明.md     从 v1.1 到 v1.6 改了什么、实测数据、已知限制
   审核报告.md     v1.1 的实机审核：节点矩阵、官方实现反编译、逐条缺陷
   调试速查.md     命令速查（只看电流，不看 status）
   probe-k70.sh    节点探针（默认只读；--test 会逐项写 3 秒并还原）
@@ -34,7 +35,7 @@ build.sh          打包：读 module.prop 的版本号，生成 bypass-guard-v<
 ## 构建 / 安装
 
 ```bash
-bash build.sh                       # 生成 bypass-guard-v1.4.5.zip
+bash build.sh                       # 生成 bypass-guard-v<版本>.zip
 # KernelSU → 模块 → 从本地安装 → 选 zip → 重启
 ```
 
@@ -50,6 +51,22 @@ bash build.sh                       # 生成 bypass-guard-v1.4.5.zip
 | 状态环 / 四个指标 | 电量、电池功率、电压、电池电流、温度 |
 
 判据只看**电池电流**：充电为正、放电为负，`|I| < 120 mA` 才算停充成功。
+
+**滞回**：≥ 停止阈值就停，≤ 恢复阈值（默认阈值−5）才继续充，中间保持现状。
+旁路下几乎不掉电，所以从 80 掉到 75 通常要几小时，不会来回切。
+
+## 耗电
+
+轮询间隔按场景自适应，每轮成本约 50 ms（6 次内建 `read` + 一次 `sleep`）：
+
+| 场景 | 间隔 | 单核占用 |
+|---|---|---|
+| 插电、离阈值 ≤3% | 3 s | ~1.7% |
+| 已在旁路中 | 9 s | ~0.56% |
+| 插电、离阈值还远 | 15 s | ~0.33% |
+| 没插电 / 功能关闭 | 60 s | ~0.08% |
+
+拔电时守护不守夜：停充位会被对齐成"充到阈值停"，插上电后由驱动自己执行。
 
 ## 注意
 

@@ -1,6 +1,6 @@
 id=bypass_guard
 name=旁路供电守护 (K70)
-version=v1.4.5
-versionCode=12
+version=v1.6
+versionCode=14
 author=local
-description=走小米充电驱动的官方停充位 smart_chg（安全中心「导航断充保护」同款），到阈值停充、低于阈值恢复，拔插不丢。只有 WebUI，不装额外 App、不带执行脚本；阈值可手输。适配 Redmi K70 / vermeer（HyperOS 2）
+description=走小米充电驱动的官方停充位 smart_chg（安全中心「导航断充保护」同款），到阈值停充、低于阈值恢复，拔插不丢。轮询按场景自适应（没插电 60 秒、插电 15 秒、快到阈值 3 秒），写节点带 flock 防驱动死锁，只有 WebUI，不装额外 App；阈值可手输。适配 Redmi K70 / vermeer（HyperOS 2）

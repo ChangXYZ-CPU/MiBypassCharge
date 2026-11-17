@@ -241,21 +241,24 @@ window.__BG_VER__ = "1.4";
     $('nodeText').textContent = ((state.BACKEND || conf.BACKEND) === 'input_suspend')
       ? 'input_suspend（断充）' : 'smart_chg（官方位）';
 
-    var now = Math.floor(Date.now() / 1000);
-    var age = lastTs ? now - lastTs : 999;
+    /* 守护存活看 bg-ctl 给的 DAEMON 标志（读 /proc/<pid>/cmdline 认命令行），
+       不用 TS 时间差——status 是实时生成的，TS 永远等于现在，判不出死活 */
     var dv = $('daemonText');
-    if (age < 12) { dv.textContent = '运行中'; dv.style.color = '#30d158'; }
+    if (state.DAEMON === '1') { dv.textContent = '运行中'; dv.style.color = '#30d158'; }
     else { dv.textContent = '未响应'; dv.style.color = '#ff9f0a'; }
   }
 
   /* ---------------- 拉数据 ---------------- */
   function refreshState() {
-    return sh('cat ' + DATA + '/state 2>/dev/null').then(function (txt) {
+    /* 走 bg-ctl status 实时读 sysfs，不读 state 文件：
+       守护为了省电会把轮询拉到 9/21 秒，state 文件会"变旧"，
+       但界面该看到的是此刻的真实数据，两者不该绑在一起。 */
+    return sh(CTL + ' status').then(function (txt) {
       if (txt === '__NOAPI__') { $('stateText').textContent = '需要 KsuWebUI 环境'; return; }
       if (txt === '__EXEC_ERR__') { $('stateText').textContent = 'JS 桥异常'; return; }
       var o = parseKV(txt);
-      if (o.TS) { state = o; lastTs = num(o.TS, 0); render(); }
-      else { $('stateText').textContent = txt ? '状态文件异常' : '守护未运行'; }
+      if (o.LEVEL !== undefined) { state = o; lastTs = num(o.TS, 0); render(); }
+      else { $('stateText').textContent = txt ? '状态读取失败' : '脚本未就绪'; }
     });
   }
 
@@ -316,7 +319,7 @@ window.__BG_VER__ = "1.4";
     function applyThreshold(v) {
       v = Math.max(40, Math.min(100, parseInt(v, 10) || 80));
       numBox.value = v;
-      var off = Math.max(10, v - 10);
+      var off = Math.max(10, v - 5);
       sh(CTL + ' set THRESHOLD_ON ' + v)
         .then(function () { return sh(CTL + ' set THRESHOLD_OFF ' + off); })
         .then(function () { toast('已设为充到 ' + v + '% 停'); return loadConf(); });
