@@ -1,0 +1,8 @@
+# 一律 LF：这些文件会被 mksh / WebView 直接读取，CRLF 会让脚本报错
+* text=auto eol=lf
+*.sh text eol=lf
+*.prop text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.zip binary
