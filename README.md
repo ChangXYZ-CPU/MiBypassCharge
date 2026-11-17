@@ -57,16 +57,12 @@ bash build.sh                       # 生成 bypass-guard-v<版本>.zip
 | 恢复充电 / 立即旁路 | 临时手动切换 |
 | 状态环 / 四个指标 | 电量、电池功率、电压、电池电流、温度 |
 
-界面截图（WebUI 上半：状态与控制；下半：省电设置与日志）：
+界面截图（点击可看大图）：从左到右为 WebUI 状态与控制、WebUI 省电设置与日志、
+Scene 充电统计（旁路生效验证：到 90% 后功率曲线归零，系统由适配器供电，电池不再充放电）。
 
-| | |
-|---|---|
-| ![WebUI 状态与控制](docs/screenshots/webui-main.jpg) | ![WebUI 省电设置与日志](docs/screenshots/webui-settings.jpg) |
-
-旁路生效的独立验证（Scene 充电统计）：到 90% 后电池功率归零，功率曲线掉到 0 并保持，
-系统改由适配器供电，电池不再充放电。
-
-![Scene 充电统计验证旁路](docs/screenshots/scene-charge-stats.jpg)
+| WebUI 状态与控制 | WebUI 省电设置与日志 | Scene 验证 |
+|---|---|---|
+| ![WebUI 状态与控制](docs/screenshots/webui-main.jpg) | ![WebUI 省电设置与日志](docs/screenshots/webui-settings.jpg) | ![Scene 充电统计](docs/screenshots/scene-charge-stats.jpg) |
 
 判据只看**电池电流**：充电为正、放电为负，`|I| < 120 mA` 才算停充成功。
 
