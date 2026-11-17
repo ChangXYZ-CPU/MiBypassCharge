@@ -32,6 +32,8 @@ pkill -f "bypass_guard/bin/bg-daemon.sh" 2>/dev/null
 sleep 1
 
 # 插拔监听器（logcat battery_status）：插拔时即时叫醒守护
+# 开机时清掉上次遗留的锁（pid 会被复用，留着只会误导）
+rm -rf "$DATA/.watch.lock" 2>/dev/null
 MODDIR="$MODDIR" sh "$MODDIR/bin/bg-watch.sh" >/dev/null 2>&1 &
 
 # 守护 + 看护

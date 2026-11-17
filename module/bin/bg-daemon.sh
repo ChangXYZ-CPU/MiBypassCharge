@@ -35,6 +35,7 @@ LAST_EN=$THRESHOLD_ON
 LAST_DI=$THRESHOLD_OFF
 LAST_SMART=""
 LAST_IDLE=""
+BOOT_TICKS=0
 SLEEP_PID=""
 
 # 连续多少个 tick 都在"明显充电"才认为驱动状态真丢了。
@@ -176,6 +177,10 @@ next_interval() {
   _p=$POLL
   [ "$_p" -ge 1 ] 2>/dev/null || _p=3
   [ "$_p" -gt 15 ] && _p=15
+  # 开机后头 10 轮用快节奏（约 30 秒）：刚开机时 PD 还没协商完，
+  # 很容易读成"没插电"，然后一觉睡 60 秒 —— 这期间电池会一直快充。
+  # 等状态稳定了再切到慢档。
+  if [ "$BOOT_TICKS" -le 10 ]; then IV=$_p; return; fi
   # 插拔由 bg-watch.sh 负责即时唤醒，所以这里可以睡得比较沉（兜底而已）
   if [ "$ENABLED" != "1" ]; then IV=$((_p * 20)); return; fi   # 关闭：60s
   if [ "$ONCH" != "1" ]; then
@@ -264,6 +269,7 @@ while true; do
   fi
 
   TICK=$((TICK + 1))
+  BOOT_TICKS=$((BOOT_TICKS + 1))
 
   # ---- 执行 ----
   if [ "$WANT" = "1" ] && [ "$BP" != "1" ]; then

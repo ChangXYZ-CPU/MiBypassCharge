@@ -1,6 +1,6 @@
 id=bypass_guard
 name=旁路供电守护 (K70)
-version=v1.6.3
-versionCode=17
+version=v1.6.4
+versionCode=18
 author=ChangXYZ
 description=插电后充到设定电量就停，改由适配器直供，低于恢复点再继续充。适配 Redmi K70（HyperOS 2）
