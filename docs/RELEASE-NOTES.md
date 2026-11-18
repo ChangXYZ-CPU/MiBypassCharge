@@ -1,7 +1,7 @@
 # Release notes · v1.7.3
 
-> 本文件供打 Release 时复制。发布包：`bypass-guard-v1.7.3.zip`
-> MD5：`d50bb9d7c812acaf89fed47fe961bb2d`（31,221 字节）
+> 本文件供打 Release 时复制。发布包：`MiBypassCharge-v1.7.3.zip`
+> MD5：`2f8e950b431faa44f09cd6c9131f5d15`（31,878 字节）
 > 历史版本与完整根因分析见 `变更说明.md`；仓库 Release 页有各版更新说明。
 
 ## 支持情况
@@ -59,7 +59,7 @@
 ## 安装
 
 1. 确认已装 KernelSU 并取得 root
-2. 下载 `bypass-guard-v1.7.3.zip`（核对 MD5）
+2. 下载 `MiBypassCharge-v1.7.3.zip`（核对 MD5）
 3. KernelSU → 模块 → 从本地安装 → 选 zip → 重启
 4. 模块卡片点「打开」进入 WebUI
 
