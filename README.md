@@ -36,13 +36,13 @@ docs/
                            v1.1 失败审核报告（已过期，仅留档）
   screenshots/             README 引用的界面截图
 
-build.sh                   打包：读 module.prop 的版本号，生成 bypass-guard-v<版本>.zip
+build.sh                   打包：读 module.prop 的版本号，生成 MiBypassCharge-v<版本>.zip
 ```
 
 ## 构建 / 安装
 
 ```bash
-bash build.sh                       # 生成 bypass-guard-v<版本>.zip
+bash build.sh                       # 生成 MiBypassCharge-v<版本>.zip
 # KernelSU → 模块 → 从本地安装 → 选 zip → 重启
 ```
 
