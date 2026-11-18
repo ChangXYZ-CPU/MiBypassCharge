@@ -145,8 +145,7 @@ fork 的子 shell 继承了 `EXIT` trap，退出时删掉了父进程仍持有�
 
 ## 可能的兼容设备（未测试）
 
-`smart_chg` 是小米/红米较新机型上普遍存在的充电保护位，K70 之后的很多高通平台机型
-大概率也有同样的接口。满足以下条件的设备**理论上可能可用**：
+`smart_chg` 是小米/红米部分机型存在的充电保护位，K70 外的机型可能也有同样的接口，**但是不一定可以稳定使用**。满足以下条件的设备**理论上可能可用，尝试可能存在风险**：
 
 - KernelSU v3.x（WebUI 依赖 `window.ksu`）
 - 高通平台，`/sys/class/qcom-battery/smart_chg` 节点存在且可写
@@ -182,7 +181,7 @@ getprop persist.vendor.smartchg        # 含 bit1 即支持
 
 ## 免责声明
 
-见 [DISCLAIMER.md](DISCLAIMER.md)。简要说：本项目修改系统充电行为，**可能导致设备无法充电**，
+见 [DISCLAIMER.md](DISCLAIMER.md)。简要说：本项目修改系统充电行为，**可能导致设备无法充电或系统故障**，
 请自行承担风险并保留救急手段；与小米、KernelSU 及任何厂商无关。
 
 ## 致谢
