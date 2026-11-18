@@ -291,3 +291,17 @@ pre#log{
 .thnum::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .thnum:focus{outline:1px solid #3b82f6}
 .thnum:disabled{opacity:.4}
+
+/* 校验完成后的反馈 toast：底部浮起，2 秒自动消失，不挡操作 */
+.bgtoast{
+  position:fixed;left:50%;bottom:64px;transform:translate(-50%,10px);
+  max-width:82vw;padding:11px 18px;border-radius:14px;
+  background:rgba(28,28,32,.94);color:#f2f2f7;
+  border:1px solid rgba(255,255,255,.10);
+  font-size:14px;line-height:1.35;text-align:center;
+  box-shadow:0 8px 28px rgba(0,0,0,.45);
+  opacity:0;pointer-events:none;z-index:9999;
+  transition:opacity .22s ease,transform .22s ease;
+}
+.bgtoast.show{opacity:1;transform:translate(-50%,0)}
+.bgtoast.err{border-color:rgba(255,159,10,.5);color:#ffbf5a}

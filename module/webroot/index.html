@@ -130,6 +130,9 @@
 
 </div>
 
+<!-- 校验完成后的反馈提示（不是点击瞬间弹，避免误以为重复响应） -->
+<div class="bgtoast" id="bgtoast" aria-live="polite"></div>
+
 <script>
 /* 旁路供电 WebUI（单文件，无外链脚本，避免 WebView 缓存旧代码） */
 window.__BG_VER__ = "1.7.2";
@@ -175,7 +178,30 @@ window.__BG_VER__ = "1.7.2";
     });
   }
 
-  function toast(_m) { /* 按用户要求关掉所有 toast 提示 */ }
+  var _toastTimer = null;
+  function toast(msg, isErr) {
+    if (!msg) return;
+    /* 优先用 KSU 官方系统 toast（window.ksu.toast，v3.x 支持） */
+    var k = window.ksu || window.KernelSU;
+    if (k && typeof k.toast === 'function') {
+      try { k.toast(msg); return; } catch (e) {}
+    }
+    /* 兜底：页面内浮层（某些 KSU 分支/独立 WebView 没有 toast API） */
+    var el = $('bgtoast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.toggle('err', !!isErr);
+    el.classList.add('show');
+    if (_toastTimer) clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2400);
+  }
+  /* KSU 的 k.exec 在部分版本是同步阻塞 JS 线程的：在它之前改的 DOM 来不及渲染，
+     命令跑完（smart_clear 要 3~5 秒）界面才一起刷新，乐观更新就白做了。
+     先让浏览器渲染一帧，再发阻塞命令，用户就能立刻看到视觉变化。 */
+  function nextFrame(cb) {
+    if (window.requestAnimationFrame) requestAnimationFrame(function () { setTimeout(cb, 0); });
+    else setTimeout(cb, 0);
+  }
   function $(id) { return document.getElementById(id); }
   function num(v, d) { var n = parseFloat(v); return isNaN(n) ? d : n; }
 
@@ -288,7 +314,12 @@ window.__BG_VER__ = "1.7.2";
       dv.textContent = '未响应'; dv.style.color = '#ff9f0a';
     }
 
-    if (!$('watchOn').disabled) $('watchOn').checked = watchCfg;
+    /* 两个开关的视觉完全由"乐观值 vconf"决定，无条件同步：
+       不能加 disabled 判断，否则某帧 disabled 为真时复选框停在原生旧态，
+       出现"描述已变已关闭、开关还是蓝色"的不一致。
+       String() 包一下防 conf 里是数字 0 时严格比较 !== '0' 误判。 */
+    $('enabled').checked = String(vconf.ENABLED !== undefined ? vconf.ENABLED : '1') !== '0';
+    $('watchOn').checked = String(vconf.WATCH !== undefined ? vconf.WATCH : '1') !== '0';
     /* 问题4：刚点开 watch 时它是 setsid 异步启动，status 还没反映出来，
        旧代码立刻判成"启动失败"橙色警告，几秒后又自己消失（闪一下）。
        现在：宽限期内显示中性的"启动中…"，确认超时仍没起来才提示失败。 */
@@ -328,11 +359,9 @@ window.__BG_VER__ = "1.7.2";
   function loadConf() {
     return sh('cat ' + DATA + '/config.conf 2>/dev/null').then(function (txt) {
       conf = parseKV(txt);
-      /* 数字框/开关认"乐观值优先"，命令未落地前不被后端旧值拨回 */
+      /* 开关的 checked 统一由 render() 按乐观值同步，这里只刷数字框，避免两处写打架 */
       var vconf = {}; for (var k in conf) vconf[k] = conf[k];
       for (var pk in pendingConf) vconf[pk] = pendingConf[pk];
-      $('enabled').checked = vconf.ENABLED !== '0';
-      $('watchOn').checked = vconf.WATCH !== '0';
       $('thNum').value = num(vconf.THRESHOLD_ON, 80);
       $('pollNum').value = num(vconf.CHECK_INTERVAL, 30);
       render();
@@ -360,22 +389,28 @@ window.__BG_VER__ = "1.7.2";
     btn.textContent = nextManual ? '恢复自动' : '立即旁路';
     btn.classList.toggle('primary', !nextManual);
     busy = true;
-    sh(CTL + ' toggle').then(function (r) {
-      var t = (r || '').trim();
-      if (/^ERR/.test(t)) {
-        /* 真失败才回滚 */
+    /* 先渲染乐观视觉，再发阻塞命令（nextFrame 让出一帧） */
+    nextFrame(function () {
+      sh(CTL + ' toggle').then(function (r) {
+        var t = (r || '').trim();
+        if (/^ERR/.test(t)) {
+          /* 真失败才回滚 */
+          delete pendingConf.MODE;
+          btn.textContent = wasManual ? '恢复自动' : '立即旁路';
+          btn.classList.toggle('primary', !wasManual);
+          toast(t.slice(4) || '操作失败', true);
+        } else {
+          /* 校验完成才提示结果（点击瞬间视觉已跟手，这里只补一句确认） */
+          toast(nextManual ? '已开启旁路' : '已恢复自动');
+        }
+        return refreshState();
+      }).then(function () {
+        return loadLog();
+      }).then(function () {
         delete pendingConf.MODE;
-        btn.textContent = wasManual ? '恢复自动' : '立即旁路';
-        btn.classList.toggle('primary', !wasManual);
-        toast(t.slice(4) || '操作失败');
-      }
-      return refreshState();
-    }).then(function () {
-      return loadLog();
-    }).then(function () {
-      delete pendingConf.MODE;
-      busy = false;
-      render();
+        busy = false;
+        render();
+      });
     });
   }
 
@@ -388,10 +423,15 @@ window.__BG_VER__ = "1.7.2";
       /* 乐观更新：视觉已随 checkbox 变，写入 pendingConf 防定时刷新拨回 */
       pendingConf.ENABLED = String(v);
       render();
-      sh(CTL + ' set ENABLED ' + v).then(function () {
-        delete pendingConf.ENABLED;
-        return loadConf();
-      }).then(function () { refreshState(); });
+      nextFrame(function () {
+        sh(CTL + ' set ENABLED ' + v).then(function (r) {
+          var t = (r || '').trim();
+          delete pendingConf.ENABLED;
+          if (/^ERR/.test(t)) toast(t.slice(4) || '设置失败', true);
+          else toast(v ? '守护已启动' : '守护已停止 · 省电中');
+          return loadConf();
+        }).then(function () { refreshState(); });
+      });
     });
 
     /* 插拔监听开关 */
@@ -401,10 +441,15 @@ window.__BG_VER__ = "1.7.2";
       /* 打开时给一个启动宽限期，避免异步启动期间闪现"启动失败" */
       if (v === 1) watchGraceUntil = Date.now() + 8000;
       render();
-      sh(CTL + ' set WATCH ' + v).then(function () {
-        delete pendingConf.WATCH;
-        return loadConf();
-      }).then(function () { refreshState(); });
+      nextFrame(function () {
+        sh(CTL + ' set WATCH ' + v).then(function (r) {
+          var t = (r || '').trim();
+          delete pendingConf.WATCH;
+          if (/^ERR/.test(t)) toast(t.slice(4) || '设置失败', true);
+          else toast(v ? '插拔即时响应已开启' : '插拔即时响应已关闭');
+          return loadConf();
+        }).then(function () { refreshState(); });
+      });
     });
 
     /* 巡检间隔：−/+ 和数字框，5~120 秒 */
@@ -414,9 +459,11 @@ window.__BG_VER__ = "1.7.2";
       v = Math.round(v / 5) * 5;
       pollBox.value = v;              /* 立即跟手 */
       pendingConf.CHECK_INTERVAL = String(v);
-      sh(CTL + ' set CHECK_INTERVAL ' + v).then(function () {
-        delete pendingConf.CHECK_INTERVAL;
-        return loadConf();
+      nextFrame(function () {
+        sh(CTL + ' set CHECK_INTERVAL ' + v).then(function () {
+          delete pendingConf.CHECK_INTERVAL;
+          return loadConf();
+        });
       });
     }
     $('pollMinus').addEventListener('click', function () { applyPoll((parseInt(pollBox.value, 10) || 30) - 5); });
@@ -434,13 +481,16 @@ window.__BG_VER__ = "1.7.2";
       var off = Math.max(10, v - 5);
       pendingConf.THRESHOLD_ON = String(v);
       pendingConf.THRESHOLD_OFF = String(off);
-      sh(CTL + ' set THRESHOLD_ON ' + v)
-        .then(function () { return sh(CTL + ' set THRESHOLD_OFF ' + off); })
-        .then(function () {
-          delete pendingConf.THRESHOLD_ON;
-          delete pendingConf.THRESHOLD_OFF;
-          return loadConf();
-        });
+      nextFrame(function () {
+        sh(CTL + ' set THRESHOLD_ON ' + v)
+          .then(function () { return sh(CTL + ' set THRESHOLD_OFF ' + off); })
+          .then(function () {
+            delete pendingConf.THRESHOLD_ON;
+            delete pendingConf.THRESHOLD_OFF;
+            toast('已设为充到 ' + v + '% 停');
+            return loadConf();
+          });
+      });
     }
 
     /* 只认「−/+」按钮和输入框回车，页面上下滑不会误改 */

@@ -72,7 +72,13 @@ stop_all() {
   for p in $(supervise_pids); do kill "$p" 2>/dev/null; done
   for p in $(daemon_pids); do kill "$p" 2>/dev/null; done
   watch_stop
-  sleep 1
+  # 轮询等退出，没了就立刻走（省掉固定 sleep 1）
+  i=0
+  while [ "$i" -lt 10 ]; do
+    [ -z "$(supervise_pids)" ] && [ -z "$(daemon_pids)" ] && break
+    sleep 0.2
+    i=$((i + 1))
+  done
   # 兜底强杀（supervise 可能在 sleep 3 里，TERM 后仍会再拉一次）
   for p in $(supervise_pids); do kill -9 "$p" 2>/dev/null; done
   for p in $(daemon_pids); do kill -9 "$p" 2>/dev/null; done
@@ -86,31 +92,21 @@ start_all() {
     # supervise 在，只需确保 daemon 活着（它会自己拉）
     return 0
   fi
-  rm -rf "$DATA_DIR/.watch.lock" 2>/dev/null
   # setsid 脱离本命令的进程组：bg-ctl 由 WebUI exec，退出会清掉自己 fork 的后台进程
   setsid "$MODDIR/bin/bg-supervise.sh" >/dev/null 2>&1 < /dev/null &
   if [ "${WATCH:-1}" = "1" ]; then
+    # 不要在这里 rm .watch.lock：那会让 watch_start 的去重失效，
+    # 每次 boot 都多起一个 watch，旧的杀不掉就堆成 4 个实例白费电。
+    # 让 watch_start 自己看锁 + cmdline 判断要不要起。
     watch_start
   fi
 }
 
 # 监听器开关：关掉省 ~0.23% 单核，代价是插拔要等巡检周期才被发现
 watch_start() {
-  # 防止重复：锁文件里的 pid 认命令行才作数
-  if [ -f "$DATA_DIR/.watch.lock" ]; then
-    _wp=$(cat "$DATA_DIR/.watch.lock/pid" 2>/dev/null)
-    case "$_wp" in
-      ''|*[!0-9]*) : ;;
-      *)
-        [ -r "/proc/$_wp/cmdline" ] && \
-        case "$(tr '\0' ' ' < "/proc/$_wp/cmdline" 2>/dev/null)" in
-          *bg-watch.sh*) return 0 ;;
-        esac
-        ;;
-    esac
-  fi
-  rm -rf "$DATA_DIR/.watch.lock" 2>/dev/null
-  # setsid 脱离本命令的进程组：bg-ctl 由 WebUI exec，退出时会清掉自己 fork 的后台进程
+  # 去重要彻底：只要已经有任何活着的 watch 实例（含子 shell），就不再起。
+  # 旧版只看锁文件里的单个 pid，锁被覆盖/残留时漏判，导致反复 boot 堆出 4 个实例。
+  [ -n "$(watch_pids)" ] && return 0
   setsid sh "$MODDIR/bin/bg-watch.sh" >/dev/null 2>&1 < /dev/null &
 }
 
@@ -125,13 +121,16 @@ watch_pids() {
 }
 
 watch_stop() {
-  # 先杀子进程（logcat / while 子 shell），再杀主进程
-  for p in $(watch_pids); do
-    for c in $(pgrep -P "$p" 2>/dev/null); do kill "$c" 2>/dev/null; done
-    kill "$p" 2>/dev/null
+  # 先 TERM 所有实例（主+子 shell 都被 watch_pids 认 cmdline 抓到）
+  for p in $(watch_pids); do kill "$p" 2>/dev/null; done
+  # 轮询等待退出，没了就立刻返回（不再固定睡两轮，关闭响应从 ~3s 降到 ~0.2s）
+  i=0
+  while [ "$i" -lt 10 ]; do
+    [ -z "$(watch_pids)" ] && break
+    sleep 0.2
+    i=$((i + 1))
   done
-  sleep 1
-  # 兜底：还在就强杀
+  # 还没死透就强杀一次
   for p in $(watch_pids); do kill -9 "$p" 2>/dev/null; done
   rm -rf "$DATA_DIR/.watch.lock" 2>/dev/null
 }
