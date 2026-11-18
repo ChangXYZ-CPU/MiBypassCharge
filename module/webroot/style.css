@@ -143,15 +143,24 @@ h1{font-size:19px;font-weight:650;margin:0;letter-spacing:.3px}
 .switch input{position:absolute;opacity:0;width:0;height:0}
 .track{
   position:absolute;inset:0;border-radius:99px;
-  background:#33333c;transition:background .22s;
+  background:#33333c;overflow:hidden;
+  will-change:opacity;
+}
+/* 蓝色底用 opacity 合成层，不用改 background：
+   KSU 的 exec 会同步阻塞主线程，background 走主线程 paint 会被冻住，
+   出现"滑块动了、背景还是蓝的，等 toast 才变黑"。
+   opacity 和 transform 一样走合成层，不受主线程阻塞影响，两者就能同步。 */
+.track::before{
+  content:"";position:absolute;inset:0;border-radius:99px;
+  background:var(--blue);opacity:0;transition:opacity .18s;
 }
 .track::after{
   content:"";position:absolute;top:3px;left:3px;
   width:24px;height:24px;border-radius:50%;
-  background:#fff;transition:transform .22s;
+  background:#fff;transition:transform .18s;
   box-shadow:0 2px 6px rgba(0,0,0,.35);
 }
-.switch input:checked + .track{background:var(--blue)}
+.switch input:checked + .track::before{opacity:1}
 .switch input:checked + .track::after{transform:translateX(20px)}
 
 /* ---------- 分段控件 ---------- */
@@ -291,3 +300,17 @@ pre#log{
 .thnum::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .thnum:focus{outline:1px solid #3b82f6}
 .thnum:disabled{opacity:.4}
+
+/* 校验完成后的反馈 toast：底部浮起，2 秒自动消失，不挡操作 */
+.bgtoast{
+  position:fixed;left:50%;bottom:64px;transform:translate(-50%,10px);
+  max-width:82vw;padding:11px 18px;border-radius:14px;
+  background:rgba(28,28,32,.94);color:#f2f2f7;
+  border:1px solid rgba(255,255,255,.10);
+  font-size:14px;line-height:1.35;text-align:center;
+  box-shadow:0 8px 28px rgba(0,0,0,.45);
+  opacity:0;pointer-events:none;z-index:9999;
+  transition:opacity .22s ease,transform .22s ease;
+}
+.bgtoast.show{opacity:1;transform:translate(-50%,0)}
+.bgtoast.err{border-color:rgba(255,159,10,.5);color:#ffbf5a}

@@ -33,7 +33,14 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   mkdir "$LOCK" 2>/dev/null || exit 0
 fi
 echo $$ > "$LOCK/pid" 2>/dev/null
-trap 'rm -rf "$LOCK" 2>/dev/null' EXIT
+# 只在"持锁的那个 pid"退出时释放锁。
+# 坑：logcat | while read 会 fork 子 shell，子 shell 继承 EXIT trap，
+# 它一结束就 rm -rf LOCK，把还活着的父进程的锁删了 → 下一个实例能起来 → 多实例。
+# 用 pid 校验：只有当前 pid 仍是锁主人才删。
+release_lock() {
+  [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK" 2>/dev/null
+}
+trap release_lock EXIT
 
 wake_daemon() {
   P=$(cat "$DATA_DIR/daemon.pid" 2>/dev/null)

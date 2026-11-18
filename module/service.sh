@@ -31,16 +31,9 @@ pkill -f "bypass_guard/bin/bg-supervise.sh" 2>/dev/null
 pkill -f "bypass_guard/bin/bg-daemon.sh" 2>/dev/null
 sleep 1
 
-# 插拔监听器（logcat battery_status）：插拔时即时叫醒守护
-# 开机时清掉上次遗留的锁（pid 会被复用，留着只会误导）
+# 开机清掉上次遗留的锁（pid 会被复用，留着只会误导）
 rm -rf "$DATA/.watch.lock" 2>/dev/null
-# WATCH=0 表示用户嫌它费电关掉了，就不启动（缺字段时默认开）
-_watch=1
-[ -f "$DATA/config.conf" ] && . "$DATA/config.conf" 2>/dev/null
-[ "$WATCH" = "0" ] && _watch=0
-if [ "$_watch" = "1" ]; then
-  MODDIR="$MODDIR" sh "$MODDIR/bin/bg-watch.sh" >/dev/null 2>&1 &
-fi
 
-# 守护 + 看护
-MODDIR="$MODDIR" sh "$MODDIR/bin/bg-supervise.sh" >/dev/null 2>&1 &
+# 统一交给 bg-ctl boot：ENABLED=0 时它只恢复充电、不启动任何进程（彻底省电），
+# ENABLED=1 时才拉起 supervise + daemon + watch。判断逻辑只在一处，避免两处不一致。
+MODDIR="$MODDIR" sh "$MODDIR/bin/bg-ctl.sh" boot >/dev/null 2>&1

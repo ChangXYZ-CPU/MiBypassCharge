@@ -84,7 +84,7 @@
     <div class="btns">
       <button class="btn primary" id="btnToggle">立即旁路</button>
     </div>
-    <p class="hint" id="btnHint">点一下 = 立刻停充；再点一下 = 恢复充电。</p>
+    <p class="hint" id="btnHint">点一下 = 立即旁路，再点一下 = 恢复自动。停充/恢复由充电驱动执行，可能延迟几秒。</p>
   </section>
 
   <section class="card info">
@@ -130,9 +130,12 @@
 
 </div>
 
+<!-- 校验完成后的反馈提示（不是点击瞬间弹，避免误以为重复响应） -->
+<div class="bgtoast" id="bgtoast" aria-live="polite"></div>
+
 <script>
 /* 旁路供电 WebUI（单文件，无外链脚本，避免 WebView 缓存旧代码） */
-window.__BG_VER__ = "1.4";
+window.__BG_VER__ = "1.7.2";
 (function () {
   'use strict';
 
@@ -141,6 +144,8 @@ window.__BG_VER__ = "1.4";
   var CTL = 'sh ' + MOD + '/bin/bg-ctl.sh';
 
   var state = {}, conf = {}, lastTs = 0, busy = false;
+  var watchGraceUntil = 0;   /* 点开 watch 后的启动宽限期截止时间戳 */
+  var pendingConf = {};      /* 乐观更新：已点击但后端未确认的配置，优先于 conf/state */
 
   /* ---------------- 与 root 通信 ----------------
      KSU v3.2.5：
@@ -173,7 +178,30 @@ window.__BG_VER__ = "1.4";
     });
   }
 
-  function toast(_m) { /* 按用户要求关掉所有 toast 提示 */ }
+  var _toastTimer = null;
+  function toast(msg, isErr) {
+    if (!msg) return;
+    /* 优先用 KSU 官方系统 toast（window.ksu.toast，v3.x 支持） */
+    var k = window.ksu || window.KernelSU;
+    if (k && typeof k.toast === 'function') {
+      try { k.toast(msg); return; } catch (e) {}
+    }
+    /* 兜底：页面内浮层（某些 KSU 分支/独立 WebView 没有 toast API） */
+    var el = $('bgtoast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.toggle('err', !!isErr);
+    el.classList.add('show');
+    if (_toastTimer) clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2400);
+  }
+  /* KSU 的 k.exec 在部分版本是同步阻塞 JS 线程的：在它之前改的 DOM 来不及渲染，
+     命令跑完（smart_clear 要 3~5 秒）界面才一起刷新，乐观更新就白做了。
+     先让浏览器渲染一帧，再发阻塞命令，用户就能立刻看到视觉变化。 */
+  function nextFrame(cb) {
+    if (window.requestAnimationFrame) requestAnimationFrame(function () { setTimeout(cb, 0); });
+    else setTimeout(cb, 0);
+  }
   function $(id) { return document.getElementById(id); }
   function num(v, d) { var n = parseFloat(v); return isNaN(n) ? d : n; }
 
@@ -188,6 +216,12 @@ window.__BG_VER__ = "1.4";
 
   /* ---------------- 渲染 ---------------- */
   function render() {
+    /* 乐观值优先：用户刚点的配置立刻生效于界面，不被 3 秒定时刷新的旧 state 覆盖 */
+    var vconf = {};
+    for (var k in conf) vconf[k] = conf[k];
+    for (var pk in pendingConf) vconf[pk] = pendingConf[pk];
+    var lvmode = pendingConf.MODE || state.MODE || vconf.MODE || 'auto';
+
     var lv = Math.max(0, Math.min(100, num(state.LEVEL, 0)));
     var bpFlag = state.BP === '1';
     var plugged = state.ON_CHARGER === '1';
@@ -236,7 +270,7 @@ window.__BG_VER__ = "1.4";
     $('cur').textContent = Math.round(-num(state.CUR, 0) / 1000);
     $('temp').textContent = (num(state.TMP, 0) / 10).toFixed(1);
 
-    var en = (state.ENABLED || conf.ENABLED || '1') !== '0';
+    var en = (pendingConf.ENABLED || state.ENABLED || vconf.ENABLED || '1') !== '0';
     if (!en) {
       st = '旁路已关闭';
       pill = '已关闭';
@@ -246,13 +280,14 @@ window.__BG_VER__ = "1.4";
     $('stateText').textContent = st;
     $('pillText').textContent = pill;
 
-    var mode = state.MODE || conf.MODE || 'auto';
-    $('modeText').textContent = { auto: '自动', force_on: '手动旁路', force_off: '手动充电' }[mode] || '自动';
+    var mode = lvmode;
+    $('modeText').textContent = { auto: '自动', force_on: '手动旁路' }[mode] || '自动';
     $('chargerText').textContent = plugged ? '已插电' : '未插电';
 
     var btn = $('btnToggle');
-    btn.textContent = bpFlag ? '恢复充电' : '立即旁路';
-    btn.classList.toggle('primary', !bpFlag);
+    var manual = (mode === 'force_on');
+    btn.textContent = manual ? '恢复自动' : '立即旁路';
+    btn.classList.toggle('primary', !manual);
     btn.disabled = !plugged || !en;
 
     $('thNum').disabled = !en;
@@ -268,16 +303,43 @@ window.__BG_VER__ = "1.4";
     /* 守护存活看 bg-ctl 给的 DAEMON 标志（读 /proc/<pid>/cmdline 认命令行），
        不用 TS 时间差——status 是实时生成的，TS 永远等于现在，判不出死活 */
     var dv = $('daemonText');
-    if (state.DAEMON === '1') { dv.textContent = '运行中'; dv.style.color = '#30d158'; }
-    else { dv.textContent = '未响应'; dv.style.color = '#ff9f0a'; }
-
     var watchOn = (state.WATCH_RUNNING === '1');
-    var watchCfg = (conf.WATCH !== '0');
-    if (!$('watchOn').disabled) $('watchOn').checked = watchCfg;
-    $('watchDesc').textContent = !watchCfg
-      ? '已关闭：省约 0.2%/天，插拔要等下一次巡检'
-      : (watchOn ? '运行中：插拔即时响应，多耗约 0.2%/天' : '已配置但未运行：可能刚开机或启动失败');
-    $('watchDesc').style.color = (watchCfg && !watchOn) ? '#ff9f0a' : '';
+    var watchCfg = (vconf.WATCH !== '0');
+    if (!en) {
+      /* 总开关关闭 = 刻意全停省电，不是故障 */
+      dv.textContent = '已停止（省电）'; dv.style.color = '#8e8e93';
+    } else if (state.DAEMON === '1') {
+      dv.textContent = '运行中'; dv.style.color = '#30d158';
+    } else {
+      dv.textContent = '未响应'; dv.style.color = '#ff9f0a';
+    }
+
+    /* 两个开关的视觉完全由"乐观值 vconf"决定，无条件同步：
+       不能加 disabled 判断，否则某帧 disabled 为真时复选框停在原生旧态，
+       出现"描述已变已关闭、开关还是蓝色"的不一致。
+       String() 包一下防 conf 里是数字 0 时严格比较 !== '0' 误判。 */
+    $('enabled').checked = String(vconf.ENABLED !== undefined ? vconf.ENABLED : '1') !== '0';
+    $('watchOn').checked = String(vconf.WATCH !== undefined ? vconf.WATCH : '1') !== '0';
+    /* 问题4：刚点开 watch 时它是 setsid 异步启动，status 还没反映出来，
+       旧代码立刻判成"启动失败"橙色警告，几秒后又自己消失（闪一下）。
+       现在：宽限期内显示中性的"启动中…"，确认超时仍没起来才提示失败。 */
+    var graceLeft = watchGraceUntil - Date.now();
+    if (!en) {
+      $('watchDesc').textContent = '已随总开关停止';
+      $('watchDesc').style.color = '';
+    } else if (!watchCfg) {
+      $('watchDesc').textContent = '已关闭：省约 0.2%/天，插拔要等下一次巡检';
+      $('watchDesc').style.color = '';
+    } else if (watchOn) {
+      $('watchDesc').textContent = '运行中：插拔即时响应，多耗约 0.2%/天';
+      $('watchDesc').style.color = '';
+    } else if (graceLeft > 0) {
+      $('watchDesc').textContent = '启动中…';
+      $('watchDesc').style.color = '';
+    } else {
+      $('watchDesc').textContent = '未能启动：可重启守护或重新打开此开关';
+      $('watchDesc').style.color = '#ff9f0a';
+    }
   }
 
   /* ---------------- 拉数据 ---------------- */
@@ -297,11 +359,11 @@ window.__BG_VER__ = "1.4";
   function loadConf() {
     return sh('cat ' + DATA + '/config.conf 2>/dev/null').then(function (txt) {
       conf = parseKV(txt);
-      var on = num(conf.THRESHOLD_ON, 80);
-      if (!$('enabled').disabled) $('enabled').checked = conf.ENABLED !== '0';
-      if (!$('watchOn').disabled) $('watchOn').checked = conf.WATCH !== '0';
-      $('thNum').value = on;
-      $('pollNum').value = num(conf.CHECK_INTERVAL, 30);
+      /* 开关的 checked 统一由 render() 按乐观值同步，这里只刷数字框，避免两处写打架 */
+      var vconf = {}; for (var k in conf) vconf[k] = conf[k];
+      for (var pk in pendingConf) vconf[pk] = pendingConf[pk];
+      $('thNum').value = num(vconf.THRESHOLD_ON, 80);
+      $('pollNum').value = num(vconf.CHECK_INTERVAL, 30);
       render();
     });
   }
@@ -315,22 +377,40 @@ window.__BG_VER__ = "1.4";
   }
 
   /* ---------------- 交互 ---------------- */
+  /* 点击响应：一律"乐观更新"——先改视觉，命令异步跑，失败才有条件回滚。
+     KSU exec 到 root shell 有几百毫秒到几秒延迟，等命令返回再更新会显得卡顿。 */
   function doToggle() {
     if (busy) return;
-    busy = true;
     var btn = $('btnToggle');
-    var old = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = '请稍候…';
-    sh(CTL + ' toggle').then(function (r) {
-      if (/^ERR/.test((r || '').trim())) toast(r.trim().slice(4) || '操作失败');
-      return refreshState();
-    }).then(function () {
-      btn.textContent = old;
-      return loadLog();
-    }).then(function () {
-      busy = false;
-      render();
+    var wasManual = (state.MODE === 'force_on');
+    var nextManual = !wasManual;
+    /* 立即切视觉，不等命令：写 pendingConf.MODE 让 render 认新值，定时刷新拨不回去 */
+    pendingConf.MODE = nextManual ? 'force_on' : 'auto';
+    btn.textContent = nextManual ? '恢复自动' : '立即旁路';
+    btn.classList.toggle('primary', !nextManual);
+    busy = true;
+    /* 先渲染乐观视觉，再发阻塞命令（nextFrame 让出一帧） */
+    nextFrame(function () {
+      sh(CTL + ' toggle').then(function (r) {
+        var t = (r || '').trim();
+        if (/^ERR/.test(t)) {
+          /* 真失败才回滚 */
+          delete pendingConf.MODE;
+          btn.textContent = wasManual ? '恢复自动' : '立即旁路';
+          btn.classList.toggle('primary', !wasManual);
+          toast(t.slice(4) || '操作失败', true);
+        } else {
+          /* 校验完成才提示结果（点击瞬间视觉已跟手，这里只补一句确认） */
+          toast(nextManual ? '已开启旁路' : '已恢复自动');
+        }
+        return refreshState();
+      }).then(function () {
+        return loadLog();
+      }).then(function () {
+        delete pendingConf.MODE;
+        busy = false;
+        render();
+      });
     });
   }
 
@@ -340,22 +420,53 @@ window.__BG_VER__ = "1.4";
 
     $('enabled').addEventListener('change', function () {
       var v = this.checked ? 1 : 0;
-      var self = this;
-      self.disabled = true;
-      sh(CTL + ' set ENABLED ' + v).then(function () {
-        toast(v ? '旁路已开启' : '旁路已关闭');
-        return loadConf();
-      }).then(function () { self.disabled = false; });
+      /* 乐观更新：视觉已随 checkbox 变，写入 pendingConf 防定时刷新拨回 */
+      pendingConf.ENABLED = String(v);
+      render();
+      nextFrame(function () {
+        sh(CTL + ' set ENABLED ' + v).then(function (r) {
+          var t = (r || '').trim();
+          if (/^ERR/.test(t)) {
+            toast(t.slice(4) || '设置失败', true);
+            delete pendingConf.ENABLED;
+            return loadConf();
+          }
+          toast(v ? '守护已启动' : '守护已停止 · 省电中');
+          /* 同 WATCH：先读后以目标值兜底，避免读回旧配置导致开关弹回 */
+          return loadConf().then(function () {
+            conf.ENABLED = String(v);
+            delete pendingConf.ENABLED;
+            render();
+          });
+        }).then(function () { refreshState(); });
+      });
     });
 
     /* 插拔监听开关 */
     $('watchOn').addEventListener('change', function () {
       var v = this.checked ? 1 : 0;
-      var self = this;
-      self.disabled = true;              /* 防止 3 秒定时 render 把开关拨回去 */
-      sh(CTL + ' set WATCH ' + v).then(function () {
-        return loadConf();               /* 必须刷 conf：render 用的是 conf.WATCH */
-      }).then(function () { self.disabled = false; });
+      pendingConf.WATCH = String(v);
+      /* 打开时给一个启动宽限期，避免异步启动期间闪现"启动失败" */
+      if (v === 1) watchGraceUntil = Date.now() + 8000;
+      render();
+      nextFrame(function () {
+        sh(CTL + ' set WATCH ' + v).then(function (r) {
+          var t = (r || '').trim();
+          if (/^ERR/.test(t)) {
+            toast(t.slice(4) || '设置失败', true);
+            delete pendingConf.WATCH;   /* 失败才回滚 */
+            return loadConf();
+          }
+          toast('插拔即时响应已' + (v ? '开启' : '关闭'));
+          /* 成功：先读配置，再以用户目标值兜底覆盖后删 pending，
+             防止 loadConf 读到旧值时开关被拨回（录屏里关掉又弹回蓝的 bug） */
+          return loadConf().then(function () {
+            conf.WATCH = String(v);
+            delete pendingConf.WATCH;
+            render();
+          });
+        }).then(function () { refreshState(); });
+      });
     });
 
     /* 巡检间隔：−/+ 和数字框，5~120 秒 */
@@ -363,8 +474,14 @@ window.__BG_VER__ = "1.4";
     function applyPoll(v) {
       v = Math.max(5, Math.min(120, parseInt(v, 10) || 30));
       v = Math.round(v / 5) * 5;
-      pollBox.value = v;
-      sh(CTL + ' set CHECK_INTERVAL ' + v).then(loadConf);
+      pollBox.value = v;              /* 立即跟手 */
+      pendingConf.CHECK_INTERVAL = String(v);
+      nextFrame(function () {
+        sh(CTL + ' set CHECK_INTERVAL ' + v).then(function () {
+          delete pendingConf.CHECK_INTERVAL;
+          return loadConf();
+        });
+      });
     }
     $('pollMinus').addEventListener('click', function () { applyPoll((parseInt(pollBox.value, 10) || 30) - 5); });
     $('pollPlus').addEventListener('click', function () { applyPoll((parseInt(pollBox.value, 10) || 30) + 5); });
@@ -377,11 +494,20 @@ window.__BG_VER__ = "1.4";
 
     function applyThreshold(v) {
       v = Math.max(40, Math.min(100, parseInt(v, 10) || 80));
-      numBox.value = v;
+      numBox.value = v;               /* 立即跟手 */
       var off = Math.max(10, v - 5);
-      sh(CTL + ' set THRESHOLD_ON ' + v)
-        .then(function () { return sh(CTL + ' set THRESHOLD_OFF ' + off); })
-        .then(function () { toast('已设为充到 ' + v + '% 停'); return loadConf(); });
+      pendingConf.THRESHOLD_ON = String(v);
+      pendingConf.THRESHOLD_OFF = String(off);
+      nextFrame(function () {
+        sh(CTL + ' set THRESHOLD_ON ' + v)
+          .then(function () { return sh(CTL + ' set THRESHOLD_OFF ' + off); })
+          .then(function () {
+            delete pendingConf.THRESHOLD_ON;
+            delete pendingConf.THRESHOLD_OFF;
+            toast('已设为充到 ' + v + '% 停');
+            return loadConf();
+          });
+      });
     }
 
     /* 只认「−/+」按钮和输入框回车，页面上下滑不会误改 */
