@@ -530,7 +530,7 @@ window.__BG_VER__ = "1.7.2";
           .then(function () {
             delete pendingConf.THRESHOLD_ON;
             delete pendingConf.THRESHOLD_OFF;
-            toast('已设为充到 ' + v + '% 停');
+            /* 阈值调整不弹 toast：数字框本身已经变了，重复提示反而打断操作 */
             return loadConf();
           });
       });
