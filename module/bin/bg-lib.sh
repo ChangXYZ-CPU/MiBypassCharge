@@ -57,8 +57,17 @@ load_conf() {
   [ -z "$BACKEND" ] && BACKEND=smartchg
   [ -z "$SMART_MODE" ] && SMART_MODE=3
   [ -z "$FALLBACK" ] && FALLBACK=1
+  # v1.7.2 迁移：废弃"手动充电"(force_off)，老配置归一到 auto。
+  # 用户关掉旁路总开关就等价于手动充电，不需要单独模式；
+  # 留着它会让"恢复自动"按钮永远回不去（老版本卡死的就是这个）。
+  if [ "$MODE" = "force_off" ]; then
+    MODE=auto
+    _mig=1
+  else
+    _mig=0
+  fi
   # 老配置缺新字段时补写回去（否则界面读不到、升级后一直用默认值）
-  if ! grep -q '^WATCH=' "$CONF" 2>/dev/null || ! grep -q '^CHECK_INTERVAL=' "$CONF" 2>/dev/null; then
+  if ! grep -q '^WATCH=' "$CONF" 2>/dev/null || ! grep -q '^CHECK_INTERVAL=' "$CONF" 2>/dev/null || [ "$_mig" = "1" ]; then
     save_conf
   fi
 }

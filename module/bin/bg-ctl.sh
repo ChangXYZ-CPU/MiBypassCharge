@@ -4,13 +4,15 @@
 #   status            输出实时状态（直接读 sysfs，不是旧文件）
 #   get               输出配置
 #   set KEY VALUE     改配置
-#   on                强制旁路（MODE=force_on）
-#   off               强制充电（MODE=force_off）
-#   resume            只恢复充电，然后回到自动
-#   auto              交回自动
-#   toggle            在旁路与恢复之间切换
+#   boot              开机启动完整链路（service.sh 调，ENABLED=0 时不启动）
+#   on                手动旁路（MODE=force_on），仅在插电时有意义
+#   auto              交回自动模式（点到"恢复自动"就是它），按阈值裁决
+#   stop              彻底停止所有守护进程（关总开关时用，零常驻省电）
 #   log [n]           日志尾部
 #   restart           重启守护
+#
+# v1.7.2：去掉独立的"手动充电"模式（force_off）。用户关掉旁路总开关就等价于
+#        手动充电，没必要多一个模式；按钮改成"手动旁路 ↔ 恢复自动"两态。
 
 MODDIR=${MODDIR:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}
 . "$MODDIR/bin/bg-lib.sh"
@@ -26,7 +28,7 @@ on_charger && ONCH=1
 # 原因：mksh 在 wait 子进程时用 sigsuspend，SIGUSR1 会被屏蔽，光靠信号不可靠。
 reconcile() {
   _bp=$(read_bp)
-  if [ "$ENABLED" != "1" ] || [ "$MODE" = "force_off" ]; then
+  if [ "$ENABLED" != "1" ]; then
     smart_clear; write_bp 0
   elif [ "$MODE" = "force_on" ]; then
     smart_set "$LEVEL"; write_bp 1
@@ -42,6 +44,54 @@ reconcile() {
   # 顺手叫一下守护（能醒更好，醒不了上面已经校正过了）
   _dpid=$(cat "$DATA_DIR/daemon.pid" 2>/dev/null)
   [ -n "$_dpid" ] && kill -USR1 "$_dpid" 2>/dev/null
+}
+
+# ---- 进程管理：关总开关时彻底停掉，零常驻、零唤醒 ----
+# 关键：supervise 会在 daemon 退出后 3 秒把它拉起来，所以必须先停 supervise，
+# 再停 daemon 和 watch，否则杀了 daemon 又活过来，等于没停。
+supervise_pids() {
+  for p in $(pgrep -f "bg-supervise[.]sh" 2>/dev/null); do
+    [ -r "/proc/$p/cmdline" ] || continue
+    case "$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)" in
+      *bg-supervise.sh*) echo "$p" ;;
+    esac
+  done
+}
+
+daemon_pids() {
+  for p in $(pgrep -f "bg-daemon[.]sh" 2>/dev/null); do
+    [ -r "/proc/$p/cmdline" ] || continue
+    case "$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)" in
+      *bg-daemon.sh*) echo "$p" ;;
+    esac
+  done
+}
+
+# 彻底停止：先 supervise（防止它拉起 daemon），再 daemon，再 watch
+stop_all() {
+  for p in $(supervise_pids); do kill "$p" 2>/dev/null; done
+  for p in $(daemon_pids); do kill "$p" 2>/dev/null; done
+  watch_stop
+  sleep 1
+  # 兜底强杀（supervise 可能在 sleep 3 里，TERM 后仍会再拉一次）
+  for p in $(supervise_pids); do kill -9 "$p" 2>/dev/null; done
+  for p in $(daemon_pids); do kill -9 "$p" 2>/dev/null; done
+  rm -f "$DATA_DIR/daemon.pid" "$DATA_DIR/supervisor.pid" 2>/dev/null
+}
+
+# 完整启动：开机 / 重新打开总开关时用
+start_all() {
+  # 已经在跑就不重复拉
+  if [ -n "$(supervise_pids)" ]; then
+    # supervise 在，只需确保 daemon 活着（它会自己拉）
+    return 0
+  fi
+  rm -rf "$DATA_DIR/.watch.lock" 2>/dev/null
+  # setsid 脱离本命令的进程组：bg-ctl 由 WebUI exec，退出会清掉自己 fork 的后台进程
+  setsid "$MODDIR/bin/bg-supervise.sh" >/dev/null 2>&1 < /dev/null &
+  if [ "${WATCH:-1}" = "1" ]; then
+    watch_start
+  fi
 }
 
 # 监听器开关：关掉省 ~0.23% 单核，代价是插拔要等巡检周期才被发现
@@ -109,13 +159,26 @@ case "$cmd" in
     k=$2; v=$3
     [ -z "$k" ] && { echo "ERR|missing key"; exit 1; }
     case "$k" in
-      THRESHOLD_ON|THRESHOLD_OFF|POLL|CHECK_INTERVAL|ENABLED|MODE|NOTIFY|BACKEND|SMART_MODE|FALLBACK)
-        set_key "$k" "$v"
-        load_conf
-        case "$k" in
-          ENABLED|MODE|THRESHOLD_ON|THRESHOLD_OFF) reconcile ;;
-          *) : ;;
-        esac
+      ENABLED)
+        set_key ENABLED "$v"; load_conf
+        if [ "$v" = "0" ]; then
+          # 关总开关：先松开停充位（否则插电不充），再彻底停掉所有进程省电
+          smart_clear; write_bp 0
+          stop_all
+          echo "OK"
+        else
+          # 开总开关：拉起完整链路
+          set_key MODE auto; MODE=auto
+          start_all
+          echo "OK"
+        fi
+        ;;
+      MODE|THRESHOLD_ON|THRESHOLD_OFF)
+        set_key "$k" "$v"; load_conf; reconcile
+        echo "OK"
+        ;;
+      POLL|CHECK_INTERVAL|NOTIFY|BACKEND|SMART_MODE|FALLBACK)
+        set_key "$k" "$v"; load_conf
         echo "OK"
         ;;
 
@@ -138,7 +201,7 @@ case "$cmd" in
       echo "ERR|未插电，旁路无意义"
       exit 1
     fi
-    # 立刻生效：停充电量取"当前电量"，不看阈值（阈值 80 而当前 70 时写 80 是不会停的）
+    # 立刻生效：停充电量取"当前电量"，不看阈值（阈值 85 而当前 70 时写 85 是不会停的）
     lvl=$LEVEL
     [ -z "$lvl" ] && lvl=80
     [ "$lvl" -lt 20 ] 2>/dev/null && lvl=20
@@ -161,44 +224,43 @@ case "$cmd" in
     exit 0
     ;;
 
-  off|force_off)
-    smart_clear
-    [ -w "$INPUT_SUSPEND" ] && echo 0 > "$INPUT_SUSPEND" 2>/dev/null
-    write_bp 0
-    set_key MODE force_off; MODE=force_off
-    sleep 1; batt_info
-    push_ui "已恢复充电 · 电量 ${LEVEL}%"
-    echo "OK"
-    ;;
-
-  resume)
-    # 必须用 force_off，不能回 auto：
-    # auto 下"电量 ≥ 阈值就停"，80% 时点恢复充电会被下一轮立刻又停掉，按钮等于没用。
-    # force_off 会一直充，充满 100% 由守护自动切回 auto（见 bg-daemon.sh）。
-    smart_clear
-    [ -w "$INPUT_SUSPEND" ] && echo 0 > "$INPUT_SUSPEND" 2>/dev/null
-    write_bp 0
-    set_key MODE force_off; MODE=force_off
-    sleep 1; batt_info
-    push_ui "已恢复充电 · 电量 ${LEVEL}%"
-    echo "OK"
-    ;;
-
   auto)
+    # "恢复自动"：清掉手动标记，按阈值重新裁决。
+    # 去掉了原来的 resume(force_off)：手动充电没必要单独做个模式，
+    # 关掉旁路总开关就等价于手动充电，这里只负责交回自动。
     set_key MODE auto
     load_conf
     reconcile
     batt_info
-    push_ui "已切回自动模式 · 电量 ${LEVEL}%"
+    push_ui "已恢复自动模式 · 电量 ${LEVEL}%"
+    echo "OK"
+    ;;
+
+  boot)
+    # 开机入口：ENABLED=0 时什么都不起（彻底省电），否则拉起完整链路
+    if [ "$ENABLED" != "1" ]; then
+      smart_clear; write_bp 0
+      echo "OK|disabled"
+      exit 0
+    fi
+    start_all
+    echo "OK"
+    ;;
+
+  stop)
+    # 彻底停止（关总开关 / 排障用）
+    smart_clear; write_bp 0
+    stop_all
     echo "OK"
     ;;
 
   toggle)
-    if [ "$(read_bp)" = "1" ]; then
-      sh "$0" resume
-    else
-      sh "$0" on
-    fi
+    # 两态：手动旁路(on=force_on) ↔ 恢复自动(auto)
+    # 判断依据用 MODE，不是 BP：BP 只是记账标志，驱动补电时会短暂失真
+    case "$MODE" in
+      force_on) sh "$0" auto ;;
+      *)        sh "$0" on ;;
+    esac
     ;;
 
   hide)
