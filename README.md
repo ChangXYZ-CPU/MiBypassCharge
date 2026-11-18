@@ -32,8 +32,8 @@ docs/
   RELEASE-NOTES.md         发布说明模板（当前 v1.7.3）
   test.sh                  全量回归脚本（42 项，跑完自动还原配置）
   probe-k70.sh             节点探针（默认只读；--test 会逐项写并还原，供新机型用）
-  evidence/                初版节点分析与官方 smart_chg 机制的证据（含自写 AXML 解码器）
-  审核报告-v1.1-历史.md    v1.1 的失败审核（已过期，仅作分析留档）
+  evidence/                初版分析与历史证据：官方 smart_chg 机制结论、自写 AXML 解码器、
+                           v1.1 失败审核报告（已过期，仅留档）
   screenshots/             README 引用的界面截图
 
 build.sh                   打包：读 module.prop 的版本号，生成 bypass-guard-v<版本>.zip
