@@ -42,8 +42,8 @@ echo 0   > /sys/class/qcom-battery/smart_chg
 
 本项目**只在 Redmi K70（`vermeer` / SM8550）、HyperOS 2.0.205 上实测过**。
 
-`smart_chg` 这一充电保护位在 K70 之后的小米/红米高通机型上大概率也普遍存在，
-因此满足下列条件的设备**理论上可能兼容**：
+`smart_chg` 是小米/红米部分机型存在的充电保护位，K70 外的机型可能也有同样的接口
+**但是不一定可以稳定使用**。满足以下条件的设备**理论上可能可用，尝试可能存在风险**：
 
 - KernelSU v3.x（WebUI 依赖 `window.ksu` 接口，**不支持 Magisk / APatch**）
 - 存在且可写 `/sys/class/qcom-battery/smart_chg`
