@@ -145,6 +145,9 @@ window.__BG_VER__ = "1.7.2";
 
   var state = {}, conf = {}, lastTs = 0, busy = false;
   var watchGraceUntil = 0;   /* 点开 watch 后的启动宽限期截止时间戳 */
+  var daemonGraceUntil = 0;  /* 操作总开关后的守护启动宽限期截止时间戳 */
+  var daemonMiss = 0;        /* 连续检测到"该在跑却不在"的次数，用于自动自愈 */
+  var lastBootTry = 0;       /* 上次自动拉起的时间戳，做限流 */
   var pendingConf = {};      /* 乐观更新：已点击但后端未确认的配置，优先于 conf/state */
 
   /* ---------------- 与 root 通信 ----------------
@@ -301,15 +304,20 @@ window.__BG_VER__ = "1.7.2";
       ? 'input_suspend（断充）' : 'smart_chg（官方位）';
 
     /* 守护存活看 bg-ctl 给的 DAEMON 标志（读 /proc/<pid>/cmdline 认命令行），
-       不用 TS 时间差——status 是实时生成的，TS 永远等于现在，判不出死活 */
+       不用 TS 时间差——status 是实时生成的，TS 永远等于现在，判不出死活。
+       注意"未响应"只在确认失败后才显示：开总开关后守护要几百 ms 才起来，
+       这段窗口里 DAEMON=0 是正常的，不该立刻报故障（旧版就是这样误报的）。 */
     var dv = $('daemonText');
     var watchOn = (state.WATCH_RUNNING === '1');
     var watchCfg = (vconf.WATCH !== '0');
+    var daemonGraceLeft = daemonGraceUntil - Date.now();
     if (!en) {
       /* 总开关关闭 = 刻意全停省电，不是故障 */
       dv.textContent = '已停止（省电）'; dv.style.color = '#8e8e93';
     } else if (state.DAEMON === '1') {
       dv.textContent = '运行中'; dv.style.color = '#30d158';
+    } else if (daemonGraceLeft > 0) {
+      dv.textContent = '启动中…'; dv.style.color = '#8e8e93';
     } else {
       dv.textContent = '未响应'; dv.style.color = '#ff9f0a';
     }
@@ -351,7 +359,23 @@ window.__BG_VER__ = "1.7.2";
       if (txt === '__NOAPI__') { $('stateText').textContent = '需要 KsuWebUI 环境'; return; }
       if (txt === '__EXEC_ERR__') { $('stateText').textContent = 'JS 桥异常'; return; }
       var o = parseKV(txt);
-      if (o.LEVEL !== undefined) { state = o; lastTs = num(o.TS, 0); render(); }
+      if (o.LEVEL !== undefined) {
+        state = o; lastTs = num(o.TS, 0); render();
+        /* 自动自愈：总开关是开的、却连续 3 次（约 9 秒）查不到守护，
+           说明 supervise 那一环也断了（正常情况它 3 秒内会自己拉起 daemon）。
+           此时主动调一次 boot 把链路补齐，用户不用手动重启服务。
+           20 秒内最多触发一次，避免反复折腾。 */
+        if (o.ENABLED === '1' && o.DAEMON !== '1') {
+          daemonMiss++;
+          var now = Date.now();
+          if (daemonMiss >= 3 && now - lastBootTry > 20000) {
+            lastBootTry = now; daemonMiss = 0;
+            sh(CTL + ' boot');   /* 不阻塞 UI，下一轮 refresh 会看到结果 */
+          }
+        } else {
+          daemonMiss = 0;
+        }
+      }
       else { $('stateText').textContent = txt ? '状态读取失败' : '脚本未就绪'; }
     });
   }
@@ -422,6 +446,8 @@ window.__BG_VER__ = "1.7.2";
       var v = this.checked ? 1 : 0;
       /* 乐观更新：视觉已随 checkbox 变，写入 pendingConf 防定时刷新拨回 */
       pendingConf.ENABLED = String(v);
+      /* 开总开关后守护要几百 ms 才起来，给个宽限避免瞬间报"未响应" */
+      if (v === 1) daemonGraceUntil = Date.now() + 12000;
       render();
       nextFrame(function () {
         sh(CTL + ' set ENABLED ' + v).then(function (r) {
