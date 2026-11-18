@@ -426,10 +426,18 @@ window.__BG_VER__ = "1.7.2";
       nextFrame(function () {
         sh(CTL + ' set ENABLED ' + v).then(function (r) {
           var t = (r || '').trim();
-          delete pendingConf.ENABLED;
-          if (/^ERR/.test(t)) toast(t.slice(4) || '设置失败', true);
-          else toast(v ? '守护已启动' : '守护已停止 · 省电中');
-          return loadConf();
+          if (/^ERR/.test(t)) {
+            toast(t.slice(4) || '设置失败', true);
+            delete pendingConf.ENABLED;
+            return loadConf();
+          }
+          toast(v ? '守护已启动' : '守护已停止 · 省电中');
+          /* 同 WATCH：先读后以目标值兜底，避免读回旧配置导致开关弹回 */
+          return loadConf().then(function () {
+            conf.ENABLED = String(v);
+            delete pendingConf.ENABLED;
+            render();
+          });
         }).then(function () { refreshState(); });
       });
     });
@@ -444,10 +452,19 @@ window.__BG_VER__ = "1.7.2";
       nextFrame(function () {
         sh(CTL + ' set WATCH ' + v).then(function (r) {
           var t = (r || '').trim();
-          delete pendingConf.WATCH;
-          if (/^ERR/.test(t)) toast(t.slice(4) || '设置失败', true);
-          else toast(v ? '插拔即时响应已开启' : '插拔即时响应已关闭');
-          return loadConf();
+          if (/^ERR/.test(t)) {
+            toast(t.slice(4) || '设置失败', true);
+            delete pendingConf.WATCH;   /* 失败才回滚 */
+            return loadConf();
+          }
+          toast('插拔即时响应已' + (v ? '开启' : '关闭'));
+          /* 成功：先读配置，再以用户目标值兜底覆盖后删 pending，
+             防止 loadConf 读到旧值时开关被拨回（录屏里关掉又弹回蓝的 bug） */
+          return loadConf().then(function () {
+            conf.WATCH = String(v);
+            delete pendingConf.WATCH;
+            render();
+          });
         }).then(function () { refreshState(); });
       });
     });

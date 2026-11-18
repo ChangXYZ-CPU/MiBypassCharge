@@ -77,7 +77,7 @@ nap() {
   SLEEP_PID=""
 }
 
-logi "=== daemon start v1.7.1 pid=$$ backend=$BACKEND mode=$MODE thr=$THRESHOLD_ON/$THRESHOLD_OFF poll=$POLL ==="
+logi "=== daemon start v1.7.2-hotfix pid=$$ backend=$BACKEND mode=$MODE thr=$THRESHOLD_ON/$THRESHOLD_OFF poll=$POLL ==="
 
 # 启动时无条件重置 BP，让主循环按当前电量重新裁决：
 # bp_on 只是我们自己的记账，而 smart_chg 是驱动级状态，进程退出时被 on_exit 清掉后，
