@@ -27,14 +27,14 @@ module/                    模块本体（可直接打包成 zip 刷入）
   webroot/                 WebUI 单页（HTML 内联 JS，无外链，避免 WebView 缓存旧代码）
 
 docs/
-  变更说明.md              从 v1.1 到 v1.7.2 的改动、实测数据、踩过的坑
-  热修复报告-v1.7.2.md     v1.7.2 修复与验收报告（根因分析 + 42 项回归结果）
-  审核报告.md              v1.1 的实机审核：节点矩阵、官方停充机制、逐条缺陷
+  变更说明.md              从 v1.1 到 v1.7.3 的改动、实测数据、踩过的坑（含各版本根因分析）
   调试速查.md              命令速查（只看电流，不看 status）
-  probe-k70.sh             节点探针（默认只读；--test 会逐项写并还原）
-  test-v1.7.2.sh           全量回归脚本（42 项，跑完自动还原配置）
-  test-full.sh             v1.7 旧版回归脚本（历史保留）
-  evidence/                官方 smart_chg 路径的文字结论与自写 AXML 解码器
+  RELEASE-NOTES.md         发布说明模板（当前 v1.7.3）
+  test.sh                  全量回归脚本（42 项，跑完自动还原配置）
+  probe-k70.sh             节点探针（默认只读；--test 会逐项写并还原，供新机型用）
+  evidence/                初版节点分析与官方 smart_chg 机制的证据（含自写 AXML 解码器）
+  审核报告-v1.1-历史.md    v1.1 的失败审核（已过期，仅作分析留档）
+  screenshots/             README 引用的界面截图
 
 build.sh                   打包：读 module.prop 的版本号，生成 bypass-guard-v<版本>.zip
 ```
@@ -116,7 +116,7 @@ Scene 充电统计（旁路生效验证：到 90% 后功率曲线归零，系统
 fork 的子 shell 继承了 `EXIT` trap，退出时删掉了父进程仍持有的锁；② 启动函数主动删锁，
 使去重失效。现在锁释放加 pid 校验、去重改为查进程表，反复开关/重复开机都稳定在 1 主 + 1 管道子。
 
-详细根因分析与逐项测试结果见 [`docs/热修复报告-v1.7.2.md`](docs/热修复报告-v1.7.2.md)。
+详细根因分析与逐项测试结果见 [`docs/变更说明.md`](docs/变更说明.md) 的 §15–16 节。
 
 ### v1.7.1
 
@@ -137,7 +137,7 @@ fork 的子 shell 继承了 `EXIT` trap，退出时删掉了父进程仍持有�
 
 ## 测试情况
 
-模块在真机（K70 / HyperOS 2.0.205）上做过完整验证，最新脚本是 `docs/test-v1.7.2.sh`（42 项），跑完会自动还原配置：
+模块在真机（K70 / HyperOS 2.0.205）上做过完整验证，脚本是 `docs/test.sh`（42 项），跑完会自动还原配置：
 
 | 类别 | 覆盖内容 | 结果 |
 |---|---|---|
@@ -186,8 +186,8 @@ getprop persist.vendor.smartchg        # 含 bit1 即支持
   echo 0   > /sys/class/qcom-battery/smart_chg
   ```
 - 用 KernelSU「禁用」而不是「卸载」时，`uninstall.sh` 不会执行；驱动状态保持到重启。
-- 只验证过 K70 / HyperOS 2。其他机型先看 `docs/审核报告.md`，确认 `smart_chg` 存在且
-  `persist.vendor.smartchg` 含 `bit1`。
+- 只验证过 K70 / HyperOS 2。其他机型先用 `docs/probe-k70.sh`（只读模式）确认 `smart_chg`
+  存在且 `persist.vendor.smartchg` 含 `bit1`。
 
 ## 免责声明
 
