@@ -4,15 +4,16 @@
 #
 # 用法（手机 root shell 里跑，或用 adb shell su -c 'sh /path/probe-k70.sh --test'）：
 #   sh probe-k70.sh            只读：只打印节点是否存在 / 当前值 / 权限，不写任何东西
-#   sh probe-k70.sh --test     逐项写 3 秒 → 立即还原 → 再等 2 秒
+#   sh probe-k70.sh --test     逐项写 5 秒 → 立即还原 → 再等 3 秒
 #
-# --test 会依次对 5 个候选节点做"写 3 秒就还原"的试验，全程只碰停充节点，
+# --test 会依次对 5 个候选节点做"写 5 秒就还原"的试验，全程只碰停充节点，
 # 不碰任何系统服务、不改设置、不写 /data。每一项都会把原值写回去。
 # 中途 Ctrl-C 也会走 trap 还原当前项。
 #
 # 判据：写入后 current_now 的绝对值接近 0（< 200000）且 status 变成
 #       Not charging / Discharging，才算"真停充"。
 #       注意 current_now 单位 µA，负值=充电。
+# 注：这是给"可能的兼容设备"用的机型探针。K70 本身的结论已确定，无需再跑 --test。
 # ============================================================================
 
 TEST=0
@@ -64,7 +65,7 @@ done
 if [ "$TEST" = "0" ]; then
   hr
   say "只读模式结束。要真正验证极性，加参数 --test 再跑一次。"
-  say "（--test 会每项写 3 秒后立刻还原，不会留下状态）"
+  say "（--test 会每项写 5 秒后立刻还原，不会留下状态）"
   exit 0
 fi
 
@@ -94,7 +95,7 @@ cleanup() {
 trap 'cleanup; exit 1' INT TERM
 
 hr
-say "开始写测试（每项 3 秒，写完立刻还原）"
+say "开始写测试（每项 5 秒，写完立刻还原）"
 say "开始前请保持：插着充电器、电量低于 90%、屏幕亮着"
 hr
 
@@ -113,13 +114,13 @@ while IFS='|' read -r node on off desc; do
   echo "$on" > "$node" 2>/dev/null
   rc=$?
   sleep 5
-  say "    写入 rc=$rc，3 秒后："
+  say "    写入 rc=$rc，5 秒后："
   show_state
 
   echo "$orig" > "$node" 2>/dev/null
   CUR_NODE=""; CUR_ORIG=""
   sleep 3
-  say "    已还原为 [$orig]，2 秒后："
+  say "    已还原为 [$orig]，3 秒后："
   show_state
 done <<EOF
 $LIST
@@ -127,7 +128,7 @@ EOF
 
 hr
 say "结论怎么读："
-say "  · 写入那 3 秒里 current 绝对值掉到 20 万以下 → 这个节点真能停充"
+say "  · 写入那 5 秒里 current 绝对值掉到 20 万以下 → 这个节点真能停充"
 say "  · current 变正数（+30 万左右）→ 断的是输入，手机在吃电池（不是旁路）"
 say "  · current 没怎么变、status 还是 Charging → 这个节点对本机无效"
 say "  · 顺便看 usb.online：如果写入后掉成 0，说明『按 usb.online 判断是否插电』"

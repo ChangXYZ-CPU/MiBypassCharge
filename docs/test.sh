@@ -1,5 +1,7 @@
 #!/system/bin/sh
-# 完整回归测试 v1.7.2-hotfix —— 真机执行，跑完自动恢复原配置
+# 完整回归测试 —— 真机执行，跑完自动恢复原配置
+# 适用版本：v1.7.2 起（v1.7.2 新增：总开关彻底停进程 / toggle 两态 / watch 不堆积 /
+#             force_off 迁移 / WebUI 修复点校验）。在 K70 + HyperOS 2 验证。
 # 覆盖：进程自愈 / WATCH 开关与不堆积 / 巡检间隔 / 阈值裁决 /
 #       总开关彻底停进程 / toggle 两态(无 force_off) / 老配置迁移 / WebUI 元素
 M=/data/adb/modules/bypass_guard
@@ -54,7 +56,8 @@ wait_charge() {
   return 1
 }
 
-echo "======== 旁路供电守护 v1.7.2-hotfix 完整回归 ========"
+echo "======== 旁路供电守护 完整回归 ========"
+echo "版本: $(grep '^version=' $M/module.prop | cut -d= -f2)"
 echo "开始: $(date '+%F %T')  电量: $(cap)%"
 echo
 
@@ -66,7 +69,10 @@ echo "[0] 基线检查"
 sh $CTL boot >/dev/null 2>&1
 sleep 5
 ver=$(grep '^version=' $M/module.prop | cut -d= -f2)
-[ "$ver" = "v1.7.2-hotfix" ] && ok "版本 $ver" || bad "版本异常 $ver"
+case "$ver" in
+  v1.7.*) ok "版本 $ver" ;;
+  *)      bad "版本异常 $ver" ;;
+esac
 for f in $M/bin/*.sh $M/service.sh $M/uninstall.sh $M/customize.sh; do
   sh -n "$f" 2>/dev/null || bad "语法 $f"
 done
