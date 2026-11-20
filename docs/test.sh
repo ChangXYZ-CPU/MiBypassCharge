@@ -70,8 +70,8 @@ sh $CTL boot >/dev/null 2>&1
 sleep 5
 ver=$(grep '^version=' $M/module.prop | cut -d= -f2)
 case "$ver" in
-  v1.7.*) ok "版本 $ver" ;;
-  *)      bad "版本异常 $ver" ;;
+  v1.*) ok "版本 $ver" ;;   # 只校验符合 v1.x 格式，具体版本由 RELEASE-NOTES 管
+  *)    bad "版本异常 $ver" ;;
 esac
 # customize.sh 只在安装阶段存在，装完会被删除，所以只在文件存在时检查
 for f in $M/bin/*.sh $M/service.sh $M/uninstall.sh; do
