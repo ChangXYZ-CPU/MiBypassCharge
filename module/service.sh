@@ -5,7 +5,7 @@
 # 原来这里是「每 30 秒 pgrep 一次」，既多一层定时唤醒，pgrep -f 还会误判。
 
 MODDIR=${0%/*}
-DATA=/data/adb/bypass_guard
+DATA=/data/adb/MiBypassCharge
 
 mkdir -p "$DATA" 2>/dev/null
 
@@ -26,9 +26,10 @@ if [ -f "$DATA/supervisor.pid" ]; then
   [ -n "$_o" ] && kill "$_o" 2>/dev/null
   sleep 1
 fi
-pkill -f "bypass_guard/bin/bg-watch.sh" 2>/dev/null
-pkill -f "bypass_guard/bin/bg-supervise.sh" 2>/dev/null
-pkill -f "bypass_guard/bin/bg-daemon.sh" 2>/dev/null
+# 用脚本名匹配，兼容新旧模块目录名（旧 id=bypass_guard / 新 id=MiBypassCharge）
+pkill -f "bg-watch.sh" 2>/dev/null
+pkill -f "bg-supervise.sh" 2>/dev/null
+pkill -f "bg-daemon.sh" 2>/dev/null
 sleep 1
 
 # 开机清掉上次遗留的锁（pid 会被复用，留着只会误导）

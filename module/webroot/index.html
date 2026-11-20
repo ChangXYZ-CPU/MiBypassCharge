@@ -14,7 +14,7 @@
       <div class="logo"></div>
       <div>
         <h1>旁路供电</h1>
-        <p class="sub">K70 · sm8550</p>
+        <p class="sub" id="deviceInfo">—</p>
       </div>
     </div>
     <div class="pill" id="pill"><i></i><span id="pillText">连接中</span></div>
@@ -125,7 +125,7 @@
   </section>
 
   <footer class="foot">
-    <p>仅适配 Redmi K70 / sm8550。停充走小米充电驱动的 smart_chg 官方位，效果以实际电流为准。</p>
+    <p>基于 Redmi K70（HyperOS 2）开发。<br>停充走小米充电驱动的 smart_chg 官方位，效果以实际电流为准。</p>
   </footer>
 
 </div>
@@ -139,8 +139,9 @@ window.__BG_VER__ = "1.7.2";
 (function () {
   'use strict';
 
-  var MOD = '/data/adb/modules/bypass_guard';
-  var DATA = '/data/adb/bypass_guard';
+  /* 模块 ID 变更前叫 bypass_guard，卸载后旧路径就没了，全部用新 ID */
+  var MOD = '/data/adb/modules/MiBypassCharge';
+  var DATA = '/data/adb/MiBypassCharge';
   var CTL = 'sh ' + MOD + '/bin/bg-ctl.sh';
 
   var state = {}, conf = {}, lastTs = 0, busy = false;
@@ -149,6 +150,10 @@ window.__BG_VER__ = "1.7.2";
   var daemonMiss = 0;        /* 连续检测到"该在跑却不在"的次数，用于自动自愈 */
   var lastBootTry = 0;       /* 上次自动拉起的时间戳，做限流 */
   var pendingConf = {};      /* 乐观更新：已点击但后端未确认的配置，优先于 conf/state */
+  var enabledIntent = null;  /* 用户刚点击的总开关目标值（'0'/'1'）。
+                                配置回读存在"写完还没落盘、读到旧值"的窗口，
+                                loadConf 内部那次 render 会拿旧值画出反向状态闪一帧。
+                                操作期间以这个意图值为准，命令确认成功后清空。 */
 
   /* ---------------- 与 root 通信 ----------------
      KSU v3.2.5：
@@ -231,7 +236,13 @@ window.__BG_VER__ = "1.7.2";
     var charging = /Charging/i.test(state.STATUS || '');
     /* 只认电流：停充=电流≈0。BP 只是个记账标志，驱动补电时它会短暂失真 */
     var stopped = Math.abs(num(state.CUR, 0)) < 120000;
-    var bp = bpFlag && stopped;
+    /* 关总开关时 write_bp 0 与电流归零有毫秒级先后，轮询会撞上
+       BP=1(没清)+CUR=0(已归零) 的不自洽快照，误显示一帧"旁路中"。
+       用总开关状态兜底：用户关掉了总开关，就不可能是旁路直供。
+       该值取自 conf/pendingConf，点击瞬间即生效，不存在时序差。 */
+    var enabledOn = String(enabledIntent !== null ? enabledIntent
+                    : (vconf.ENABLED === undefined ? '1' : vconf.ENABLED)) !== '0';
+    var bp = bpFlag && stopped && enabledOn;
 
     /* 状态判定顺序：有没有插电 > 是否旁路 > status
        （旁路中 status 会滞后显示 Charging，不能拿它当充电依据） */
@@ -273,7 +284,13 @@ window.__BG_VER__ = "1.7.2";
     $('cur').textContent = Math.round(-num(state.CUR, 0) / 1000);
     $('temp').textContent = (num(state.TMP, 0) / 10).toFixed(1);
 
-    var en = (pendingConf.ENABLED || state.ENABLED || vconf.ENABLED || '1') !== '0';
+    /* 优先级：用户意图 > 配置(conf/pending) > status 回报。
+       status 里的 ENABLED 是配置文件的值，写盘有延迟，最容易滞后，
+       所以只能做最后兜底；否则关停瞬间会读到旧值 1，闪一帧绿色"正在充电"。 */
+    var enRaw = enabledIntent !== null ? enabledIntent
+              : (vconf.ENABLED !== undefined ? vconf.ENABLED
+                 : (state.ENABLED !== undefined ? state.ENABLED : '1'));
+    var en = String(enRaw) !== '0';
     if (!en) {
       st = '旁路已关闭';
       pill = '已关闭';
@@ -325,8 +342,11 @@ window.__BG_VER__ = "1.7.2";
     /* 两个开关的视觉完全由"乐观值 vconf"决定，无条件同步：
        不能加 disabled 判断，否则某帧 disabled 为真时复选框停在原生旧态，
        出现"描述已变已关闭、开关还是蓝色"的不一致。
-       String() 包一下防 conf 里是数字 0 时严格比较 !== '0' 误判。 */
-    $('enabled').checked = String(vconf.ENABLED !== undefined ? vconf.ENABLED : '1') !== '0';
+       String() 包一下防 conf 里是数字 0 时严格比较 !== '0' 误判。
+       enabledIntent 优先级最高：配置回读的"旧值窗口"期间也不许画反向状态。 */
+    var enabledWant = enabledIntent !== null ? enabledIntent
+                    : (vconf.ENABLED !== undefined ? vconf.ENABLED : '1');
+    $('enabled').checked = String(enabledWant) !== '0';
     $('watchOn').checked = String(vconf.WATCH !== undefined ? vconf.WATCH : '1') !== '0';
     /* 问题4：刚点开 watch 时它是 setsid 异步启动，status 还没反映出来，
        旧代码立刻判成"启动失败"橙色警告，几秒后又自己消失（闪一下）。
@@ -446,6 +466,8 @@ window.__BG_VER__ = "1.7.2";
       var v = this.checked ? 1 : 0;
       /* 乐观更新：视觉已随 checkbox 变，写入 pendingConf 防定时刷新拨回 */
       pendingConf.ENABLED = String(v);
+      /* 意图值：配置回读可能读到落盘前的旧值，操作完成前以它为准 */
+      enabledIntent = String(v);
       /* 开总开关后守护要几百 ms 才起来，给个宽限避免瞬间报"未响应" */
       if (v === 1) daemonGraceUntil = Date.now() + 12000;
       render();
@@ -453,16 +475,25 @@ window.__BG_VER__ = "1.7.2";
         sh(CTL + ' set ENABLED ' + v).then(function (r) {
           var t = (r || '').trim();
           if (/^ERR/.test(t)) {
-            toast(t.slice(4) || '设置失败', true);
             delete pendingConf.ENABLED;
-            return loadConf();
+            enabledIntent = null;   /* 失败：回退到配置真实值 */
+            return loadConf().then(function () {
+              toast(t.slice(4) || '设置失败', true);
+            });
           }
-          toast(v ? '守护已启动' : '守护已停止 · 省电中');
           /* 同 WATCH：先读后以目标值兜底，避免读回旧配置导致开关弹回 */
           return loadConf().then(function () {
             conf.ENABLED = String(v);
             delete pendingConf.ENABLED;
+            enabledIntent = null;   /* 配置已确认，交还给真实值 */
             render();
+            /* toast 必须等这一帧真正画完再弹。KSU 的 toast 是 native 浮层，
+               弹出会强制 WebView 合成一次；render() 只改了 DOM，浏览器要到
+               下一帧才绘制，若同 task 内立刻弹 toast，合成到的还是中间态——
+               表现为"弹完 toast 闪一下"。nextFrame 保证 DOM 已提交再弹。 */
+            nextFrame(function () {
+              toast(v ? '守护已启动' : '守护已停止 · 省电中');
+            });
           });
         }).then(function () { refreshState(); });
       });
@@ -549,8 +580,25 @@ window.__BG_VER__ = "1.7.2";
     });
   }
 
+  /* 读取本机真实机型 / SoC，替代原来的硬编码 K70 · sm8550。
+     读不到就留空，避免出现与设备不符的信息。 */
+  function loadDeviceInfo() {
+    var el = $('deviceInfo');
+    if (!el) return;
+    sh('echo "$(getprop ro.product.marketname)|$(getprop ro.soc.model)|$(getprop ro.product.model)"').then(function (out) {
+      if (!out || out === '__NOAPI__' || out === '__EXEC_ERR__') return;
+      var parts = String(out).trim().split('|');
+      var market = (parts[0] || '').trim();
+      var soc = (parts[1] || '').trim();
+      var model = (parts[2] || '').trim();
+      var text = (market || model || '') + (soc ? ' · ' + soc : '');
+      el.textContent = text || '—';
+    });
+  }
+
   function boot() {
     bind();
+    loadDeviceInfo();
     loadConf().then(refreshState).then(loadLog);
     setInterval(refreshState, 3000);
     setInterval(function () { if (!document.hidden) loadLog(); }, 9000);
