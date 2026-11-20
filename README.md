@@ -180,7 +180,7 @@ fork 的子 shell 继承了 `EXIT` trap，退出时删掉了父进程仍持有�
 - HyperOS / MIUI 且系统里确实有「导航断充保护」功能
 
 **已在其他机型上跑通的案例，以及对应的 HyperOS 版本，见
-[酷安帖评论区](https://www.coolapk.com/feed/75130364?s=YWVlNGFmNTYyMjg3NTUwZzZhZmZkYzAwega1673)。**
+[酷安评论区](https://www.coolapk.com/feed/75130364?s=YWVlNGFmNTYyMjg3NTUwZzZhZmZkYzAwega1673)。**
 这些是用户自行测试的结果，不是作者验证的，仅供参考。
 
 自检（root 终端）：
