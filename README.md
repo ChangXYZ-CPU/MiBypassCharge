@@ -4,10 +4,11 @@ KernelSU 模块：插上充电器后，电池充到设定电量就停止充电�
 停充走小米充电驱动的官方位 `smart_chg` —— 和安全中心「导航断充保护」同一条路，
 状态由驱动保持，拔插不丢，不需要周期性重写。
 
-- 机型：**已在 Redmi K70**（`23113RKC6C` / `vermeer` / SM8550）实测；见下方"可能的兼容设备"
+- 机型：**仅基于 Redmi K70**（`23113RKC6C` / `vermeer` / SM8550）**本机测试**，其他机型未验证
 - 系统：HyperOS 2（实测 `2.0.205.0.VNKCNXM`，Android 15）
 - Root：**仅 KernelSU**（WebUI 依赖 `window.ksu`，不支持 Magisk / APatch）
 - 模块本身只有 root 脚本 + WebUI，**不安装任何 App**
+- **部分机型理论上可能可用**，实测可用的机型和 HyperOS 版本见[酷安帖评论区](https://www.coolapk.com/feed/75130364?s=YWVlNGFmNTYyMjg3NTUwZzZhZmZkYzAwega1673)
 - 注：本人制作模块初衷为自用，可能因学业原因维护修理不及时，欢迎提 Issue，但无法保证响应时效。目前仅考虑针对本机开发。
 
 ## 目录

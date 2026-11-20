@@ -6,7 +6,7 @@
 # 单独成文件是为了让 service.sh 和 bg-ctl.sh restart 复用同一份逻辑。
 
 MODDIR=${MODDIR:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}
-DATA_DIR=${DATA_DIR_OVERRIDE:-/data/adb/bypass_guard}
+DATA_DIR=${DATA_DIR_OVERRIDE:-/data/adb/MiBypassCharge}
 mkdir -p "$DATA_DIR" 2>/dev/null
 
 # pid 会被复用，光看 kill -0 不够，要认命令行

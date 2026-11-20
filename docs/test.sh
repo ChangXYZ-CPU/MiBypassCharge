@@ -1,11 +1,11 @@
 #!/system/bin/sh
 # 完整回归测试 —— 真机执行，跑完自动恢复原配置
-# 适用版本：v1.7.2 起（v1.7.2 新增：总开关彻底停进程 / toggle 两态 / watch 不堆积 /
+# 适用版本：v1.7.4 起（模块 ID 已改为 MiBypassCharge）（v1.7.2 新增：总开关彻底停进程 / toggle 两态 / watch 不堆积 /
 #             force_off 迁移 / WebUI 修复点校验）。在 K70 + HyperOS 2 验证。
 # 覆盖：进程自愈 / WATCH 开关与不堆积 / 巡检间隔 / 阈值裁决 /
 #       总开关彻底停进程 / toggle 两态(无 force_off) / 老配置迁移 / WebUI 元素
-M=/data/adb/modules/bypass_guard
-D=/data/adb/bypass_guard
+M=/data/adb/modules/MiBypassCharge
+D=/data/adb/MiBypassCharge
 CTL="$M/bin/bg-ctl.sh"
 B=/sys/class/power_supply/battery
 Q=/sys/class/qcom-battery
@@ -73,13 +73,21 @@ case "$ver" in
   v1.7.*) ok "版本 $ver" ;;
   *)      bad "版本异常 $ver" ;;
 esac
-for f in $M/bin/*.sh $M/service.sh $M/uninstall.sh $M/customize.sh; do
+# customize.sh 只在安装阶段存在，装完会被删除，所以只在文件存在时检查
+for f in $M/bin/*.sh $M/service.sh $M/uninstall.sh; do
+  [ -f "$f" ] || continue
   sh -n "$f" 2>/dev/null || bad "语法 $f"
 done
+[ -f "$M/customize.sh" ] && { sh -n "$M/customize.sh" 2>/dev/null || bad "语法 customize.sh"; }
 ok "脚本语法全部通过"
 [ "$(dcount)" -eq 1 ] && ok "daemon=1" || bad "daemon 数量=$(dcount)"
 [ "$(scount)" -eq 1 ] && ok "supervise=1" || bad "supervise 数量=$(scount)"
-[ "$(wcount)" -eq 2 ] && ok "watch=2(1主1管道子)" || bad "watch 数量=$(wcount)"
+_w=$(grep '^WATCH=' $D/config.conf 2>/dev/null | cut -d= -f2)
+if [ "$_w" = "1" ]; then
+  [ "$(wcount)" -eq 2 ] && ok "watch=2(1主1管道子)" || bad "watch 数量=$(wcount)"
+else
+  [ "$(wcount)" -eq 0 ] && ok "watch=0(WATCH关闭)" || bad "WATCH=0 但有 $(wcount) 个 watch"
+fi
 
 # ============ 1. 守护自愈 ============
 echo "[1] kill daemon → supervise 自动重启"

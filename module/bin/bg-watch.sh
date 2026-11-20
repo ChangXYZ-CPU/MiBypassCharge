@@ -15,7 +15,7 @@
 # 且守护的轮询可以拉到 30/60 秒，总账不亏。
 
 MODDIR=${MODDIR:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}
-DATA_DIR=${DATA_DIR_OVERRIDE:-/data/adb/bypass_guard}
+DATA_DIR=${DATA_DIR_OVERRIDE:-/data/adb/MiBypassCharge}
 LASTFILE=$DATA_DIR/.plugged
 
 mkdir -p "$DATA_DIR" 2>/dev/null

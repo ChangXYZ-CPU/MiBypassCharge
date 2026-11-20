@@ -90,6 +90,12 @@ start_all() {
   # 已经在跑就不重复拉
   if [ -n "$(supervise_pids)" ]; then
     # supervise 在，只需确保 daemon 活着（它会自己拉）
+    # 但 watch 是独立进程，可能被单独杀掉或配置刚改过，要按当前配置校正
+    if [ "${WATCH:-1}" = "1" ]; then
+      watch_start
+    else
+      watch_stop
+    fi
     return 0
   fi
   # setsid 脱离本命令的进程组：bg-ctl 由 WebUI exec，退出会清掉自己 fork 的后台进程
@@ -99,6 +105,9 @@ start_all() {
     # 每次 boot 都多起一个 watch，旧的杀不掉就堆成 4 个实例白费电。
     # 让 watch_start 自己看锁 + cmdline 判断要不要起。
     watch_start
+  else
+    # 配置要求关监听：清掉残留的 watch，否则关不掉会持续唤醒耗电
+    watch_stop
   fi
 }
 
@@ -239,6 +248,7 @@ case "$cmd" in
     # 开机入口：ENABLED=0 时什么都不起（彻底省电），否则拉起完整链路
     if [ "$ENABLED" != "1" ]; then
       smart_clear; write_bp 0
+      stop_all          # 连残留进程一起清，保证"关了就是零占用"
       echo "OK|disabled"
       exit 0
     fi

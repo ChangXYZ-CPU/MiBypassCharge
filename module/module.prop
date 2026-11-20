@@ -1,6 +1,6 @@
-id=bypass_guard
-name=旁路供电守护 (K70)
-version=v1.7.3
-versionCode=23
+id=MiBypassCharge
+name=MiBypassCharge
+version=v1.8.0
+versionCode=25
 author=ChangXYZ
-description=插电后充到设定电量就停，改由适配器直供，低于恢复点再继续充。适配 Redmi K70（HyperOS 2）
+description=基于小米部分机型导航断充功能实现的旁路供电，具体适配见仓库说明：\nhttps://github.com/ChangXYZ-CPU/MiBypassCharge\n开发基于 Redmi K70（HyperOS 2）
