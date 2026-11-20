@@ -8,7 +8,6 @@ KernelSU 模块：插上充电器后，电池充到设定电量就停止充电�
 - 系统：HyperOS 2（实测 `2.0.205.0.VNKCNXM`，Android 15）
 - Root：**仅 KernelSU**（WebUI 依赖 `window.ksu`，不支持 Magisk / APatch）
 - 模块本身只有 root 脚本 + WebUI，**不安装任何 App**
-- **部分机型理论上可能可用**，实测可用的机型和 HyperOS 版本见[酷安帖评论区](https://www.coolapk.com/feed/75130364?s=YWVlNGFmNTYyMjg3NTUwZzZhZmZkYzAwega1673)
 - 注：本人制作模块初衷为自用，可能因学业原因维护修理不及时，欢迎提 Issue，但无法保证响应时效。目前仅考虑针对本机开发。
 
 ## 目录
@@ -73,6 +72,23 @@ Scene 充电统计（旁路生效验证：到 90% 后功率曲线归零，系统
 旁路下几乎不掉电，所以从 85 掉到 80 通常要几小时，不会来回切。
 
 ## 更新日志
+
+### v1.8.0（2026-11-20）— 模块更名，需卸载重装
+
+**⚠️ 模块 ID 从 `bypass_guard` 改为 `MiBypassCharge`。KernelSU 以 ID 识别模块，
+旧版与本版会被视为两个独立模块，直接覆盖安装会导致两套守护同时运行。
+升级必须先卸载旧模块 → 重启 → 安装新版 → 再重启。**
+配置会自动迁移（`/data/adb/bypass_guard` → `/data/adb/MiBypassCharge`），阈值等设置不丢。
+
+- **修好「关了开关还在后台占资源」**：`WATCH=0` 时若直接改配置再 boot，监听进程不会被
+  清理，会持续唤醒耗电。现在 boot 按当前配置校正 watch 进程，`ENABLED=0` 分支改为彻底
+  `stop_all`。实测关闭总开关后 daemon / supervise / watch 全部停止，残留进程 0 个。
+- **修好关开关瞬间界面闪一帧**：配置回读存在"写入未落盘、读到旧值"的窗口，会在关停瞬间
+  画出反向状态。新增用户意图值兜底，toast 改为等画面绘制完成后再弹。
+- **数据目录随模块 ID 调整**，首次运行自动从旧目录迁移配置。
+- **WebUI 顶部改为读取本机真实机型 / SoC**，不再硬编码 K70。
+- 安装横幅去掉易错位的方框，版本号改为从 `module.prop` 动态读取；底部说明支持换行。
+- 回归测试 42 项全过。
 
 ### v1.7.3（2026-11-18）
 
@@ -162,6 +178,10 @@ fork 的子 shell 继承了 `EXIT` trap，退出时删掉了父进程仍持有�
 - 高通平台，`/sys/class/qcom-battery/smart_chg` 节点存在且可写
 - `getprop persist.vendor.smartchg` 的值含 `bit1`（支持导航断充）
 - HyperOS / MIUI 且系统里确实有「导航断充保护」功能
+
+**已在其他机型上跑通的案例，以及对应的 HyperOS 版本，见
+[酷安帖评论区](https://www.coolapk.com/feed/75130364?s=YWVlNGFmNTYyMjg3NTUwZzZhZmZkYzAwega1673)。**
+这些是用户自行测试的结果，不是作者验证的，仅供参考。
 
 自检（root 终端）：
 
