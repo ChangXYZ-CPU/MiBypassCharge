@@ -5,7 +5,8 @@ cd "$(dirname "$0")"
 
 VER=$(awk -F= '/^version=/{print $2}' module/module.prop | tr -d '\r')
 [ -n "$VER" ] || { echo "读不到版本号"; exit 1; }
-OUT="MiBypassCharge-${VER}.zip"
+mkdir -p release
+OUT="release/MiBypassCharge-${VER}.zip"
 [ -f "$OUT" ] && rm -f "$OUT"
 
 python - "$OUT" "$VER" <<'PY'
