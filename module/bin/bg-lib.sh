@@ -123,6 +123,39 @@ logi() {
   fi
 }
 
+# ---------------------------------------------------------------- 进程组自救
+# 背景（2026-11-25 实测定位）：从 WebUI(ksu.exec) 拉起的进程会继承 KernelSU
+# 管理器的 **app 进程组 cgroup**：
+#   /sys/fs/cgroup/uid_<管理器uid>/pid_<管理器pid>/      ← cgroup v2 的进程组控制器
+# 用户划掉 / force-stop 管理器时，Android 对那个目录写 cgroup.kill，整组 SIGKILL。
+# 这一刀与 PPid(=1)、oom_adj(=-17)、SELinux 上下文(u:r:ksu:s0) 全都无关——那些
+# 指标看着"拉满"也照样死，因为杀的是 cgroup 成员关系，不是进程本身。
+# 开机由 ksud/service.sh 拉起的进程在 v2 根组 `/`，永远不会被这一刀扫到，这就是
+# "别的模块没事" 的真正原因（与 native 还是 shell 无关）。
+#
+# 所以只要把自己写进 v2 根组，后面 fork 的子进程全部继承，就彻底脱离这一刀。
+# v2 在这台机器上只挂了进程组控制器（内存/CPU 在 v1 的 /dev/memcg、/dev/cpuctl），
+# 迁移不影响任何资源记账，也不影响 oom 评分。
+#
+# 必须在 fork 子进程之前调用（迁移只对当前进程生效，已存在的子进程不跟着走）。
+cg_escape() {
+  [ -w /sys/fs/cgroup/cgroup.procs ] || return 0
+  _cg=
+  while IFS= read -r _l; do
+    case "$_l" in 0::*) _cg=${_l#0::} ;; esac
+  done < /proc/self/cgroup
+  case "$_cg" in
+    */uid_*|*/pid_*) : ;;       # 在某个进程组里，需要搬
+    *) return 0 ;;              # 已经在根组，什么都不做
+  esac
+  if echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null; then
+    logi "cgroup escape ok pid=$$: $_cg -> /"
+  else
+    logi "cgroup escape FAILED pid=$$: $_cg"
+    return 1
+  fi
+}
+
 rd() { cat "$1" 2>/dev/null; }
 
 # 只认数字（允许前导 -），其它一律当 0。

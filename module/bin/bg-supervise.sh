@@ -27,6 +27,12 @@ if [ -f "$DATA_DIR/supervisor.pid" ]; then
 fi
 echo $$ > "$DATA_DIR/supervisor.pid"
 
+# 脱离 KSU 管理器的 app 进程组（原理见 bg-lib.sh 的 cg_escape）。
+# 放在单实例判断之后、拉起 daemon 之前：daemon 由本进程 fork，继承根组。
+# 若 supervisor 是开机/service.sh 拉起的，本来就在根组，cg_escape 直接返回。
+. "$MODDIR/bin/bg-lib.sh" 2>/dev/null
+cg_escape 2>/dev/null
+
 while true; do
   MODDIR="$MODDIR" sh "$MODDIR/bin/bg-daemon.sh" >/dev/null 2>&1
   sleep 3
