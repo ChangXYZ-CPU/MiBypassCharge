@@ -73,6 +73,14 @@ Scene 充电统计（旁路生效验证：到 90% 后功率曲线归零，系统
 
 ## 更新日志
 
+### v1.8.2（2026-11-25）— 收敛 cgroup 自救的日志
+
+- v1.8.1 装到真机后发现：WebUI 每 3 秒轮询一次 `status`，每次都会走 `cg_escape` 并写一行日志，
+  开着 WebUI 时 `bypass.log` 会被这行刷掉（还多一次 flash 写）。现在 `cg_escape` 默认静默，
+  只有真正拉起常驻链的 `bg-supervise` 传 `loud`，每次启动只留一行取证记录；失败仍无条件记录。
+- 真机证据（v1.8.1 实测）：`cgroup escape ok pid=28269: /uid_10290/pid_19726 -> /`
+  —— `uid_10290` 就是 KernelSU 管理器，WebUI 路径的推断得到坐实。
+
 ### v1.8.1（2026-11-25）— 修好「划掉 KernelSU 后守护消失」
 
 - **根因**：从 WebUI（`ksu.exec`）拉起的进程继承 KernelSU 管理器的 **app 进程组 cgroup**
