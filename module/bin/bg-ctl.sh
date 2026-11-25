@@ -19,6 +19,7 @@ MODDIR=${MODDIR:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}
 
 # 第一件事：如果自己是 WebUI(ksu.exec) 拉起来的，先脱离管理器 app 进程组。
 # 必须在本脚本 fork 任何后台进程（supervise / watch）之前做，子进程才会继承根组。
+# 默认静默：status 被 WebUI 每 3 秒轮询一次，只有 bg-supervise 会写那行取证日志。
 cg_escape
 
 load_conf

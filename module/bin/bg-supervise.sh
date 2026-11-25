@@ -30,8 +30,10 @@ echo $$ > "$DATA_DIR/supervisor.pid"
 # 脱离 KSU 管理器的 app 进程组（原理见 bg-lib.sh 的 cg_escape）。
 # 放在单实例判断之后、拉起 daemon 之前：daemon 由本进程 fork，继承根组。
 # 若 supervisor 是开机/service.sh 拉起的，本来就在根组，cg_escape 直接返回。
+# 这里是"链条真正起来了"的唯一入口，所以只有这里传 loud 写一行取证日志
+# （bg-ctl 被 WebUI 每 3 秒轮询一次 status，不能每次都写）。
 . "$MODDIR/bin/bg-lib.sh" 2>/dev/null
-cg_escape 2>/dev/null
+cg_escape loud 2>/dev/null
 
 while true; do
   MODDIR="$MODDIR" sh "$MODDIR/bin/bg-daemon.sh" >/dev/null 2>&1

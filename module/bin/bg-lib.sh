@@ -138,7 +138,12 @@ logi() {
 # 迁移不影响任何资源记账，也不影响 oom 评分。
 #
 # 必须在 fork 子进程之前调用（迁移只对当前进程生效，已存在的子进程不跟着走）。
+#
+# 默认静默：WebUI 每 3 秒轮询一次 status，每次都会调到这里，写日志会把 bypass.log
+# 刷满（还多一次 flash 写）。只有真正拉起常驻链的 bg-supervise 传 loud，每次
+# 只留一行明确的取证记录；失败一律记录，不管 loud 与否。
 cg_escape() {
+  _loud=${1:-}
   [ -w /sys/fs/cgroup/cgroup.procs ] || return 0
   _cg=
   while IFS= read -r _l; do
@@ -149,7 +154,7 @@ cg_escape() {
     *) return 0 ;;              # 已经在根组，什么都不做
   esac
   if echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null; then
-    logi "cgroup escape ok pid=$$: $_cg -> /"
+    [ -n "$_loud" ] && logi "cgroup escape ok pid=$$: $_cg -> /"
   else
     logi "cgroup escape FAILED pid=$$: $_cg"
     return 1
