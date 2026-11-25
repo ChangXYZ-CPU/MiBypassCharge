@@ -17,6 +17,10 @@
 MODDIR=${MODDIR:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}
 . "$MODDIR/bin/bg-lib.sh"
 
+# 第一件事：如果自己是 WebUI(ksu.exec) 拉起来的，先脱离管理器 app 进程组。
+# 必须在本脚本 fork 任何后台进程（supervise / watch）之前做，子进程才会继承根组。
+cg_escape
+
 load_conf
 find_bat
 batt_info

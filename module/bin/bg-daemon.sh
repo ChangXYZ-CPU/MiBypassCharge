@@ -18,6 +18,7 @@
 
 MODDIR=${MODDIR:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}
 . "$MODDIR/bin/bg-lib.sh"
+cg_escape
 
 # 版本号从 module.prop 读，不再硬编码（以前写死 v1.7.2 导致升级后日志显示旧版本）
 MODVER=$(awk -F= '/^version=/{print $2}' "$MODDIR/module.prop" 2>/dev/null | tr -d '\r')

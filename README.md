@@ -73,6 +73,21 @@ Scene 充电统计（旁路生效验证：到 90% 后功率曲线归零，系统
 
 ## 更新日志
 
+### v1.8.1（2026-11-25）— 修好「划掉 KernelSU 后守护消失」
+
+- **根因**：从 WebUI（`ksu.exec`）拉起的进程继承 KernelSU 管理器的 **app 进程组 cgroup**
+  （`/sys/fs/cgroup/uid_<管理器uid>/pid_<管理器pid>`）。用户划掉 / force-stop 管理器时，
+  Android 对该目录写 `cgroup.kill`，整组 SIGKILL —— 与 PPid、`oom_score_adj`、SELinux
+  上下文都无关，所以此前"所有抗杀指标拉满仍被杀"。
+- **修法**：`cg_escape`（`bg-lib.sh`）：启动时若发现自己在 `/uid_*/pid_*` 进程组里，
+  就把自己写进 cgroup v2 根组 `/`，后续 fork 的 supervise / daemon / watch 全部继承。
+  v2 在这台机器上只挂进程组控制器（内存/CPU 在 v1），迁移不影响任何资源记账。
+  开机由 `service.sh` 拉起的链路本来就在根组，此函数直接返回，行为不变。
+- 实测：入口 shell 冒充 app 进程组 → `bg-ctl boot` → 链路落到 `/` → force-stop 该 app
+  后 supervise / daemon 全部存活；不修则全部消失。
+- 附带修正一个认知错误：能扛住"杀管理器"的不是"native 二进制"，而是"出生在 v2 根组"。
+  AdGuardHome 的 `iptables.sh`（纯 shell）同样存活，因为它在 `/`。
+
 ### v1.8.0（2026-11-20）— 模块更名，需卸载重装
 
 **⚠️ 模块 ID 从 `bypass_guard` 改为 `MiBypassCharge`。KernelSU 以 ID 识别模块，

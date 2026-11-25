@@ -1,6 +1,6 @@
 id=MiBypassCharge
 name=MiBypassCharge
-version=v1.8.0
-versionCode=25
+version=v1.8.1
+versionCode=26
 author=ChangXYZ
 description=基于小米部分机型导航断充功能实现的旁路供电，具体适配见仓库说明：\nhttps://github.com/ChangXYZ-CPU/MiBypassCharge\n开发基于 Redmi K70（HyperOS 2）

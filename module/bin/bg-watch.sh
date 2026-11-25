@@ -33,6 +33,15 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   mkdir "$LOCK" 2>/dev/null || exit 0
 fi
 echo $$ > "$LOCK/pid" 2>/dev/null
+
+# 脱离 KSU 管理器的 app 进程组（原理见 bg-lib.sh 的 cg_escape）。
+# 本脚本由 bg-ctl 直接 fork，若 bg-ctl 是 WebUI 拉起的，就会落在管理器进程组里。
+# 这里用 4 行内联版（不 source lib，保持这个文件零依赖、启动快）。
+_cg=$(sed -n 's/^0:://p' /proc/self/cgroup 2>/dev/null)
+case "$_cg" in
+  */uid_*|*/pid_*) echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null ;;
+esac
+unset _cg
 # 只在"持锁的那个 pid"退出时释放锁。
 # 坑：logcat | while read 会 fork 子 shell，子 shell 继承 EXIT trap，
 # 它一结束就 rm -rf LOCK，把还活着的父进程的锁删了 → 下一个实例能起来 → 多实例。
