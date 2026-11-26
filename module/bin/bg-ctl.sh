@@ -190,7 +190,7 @@ case "$cmd" in
         set_key "$k" "$v"; load_conf; reconcile
         echo "OK"
         ;;
-      POLL|CHECK_INTERVAL|NOTIFY|BACKEND|SMART_MODE|FALLBACK)
+      POLL|CHECK_INTERVAL|BACKEND|SMART_MODE|FALLBACK)
         set_key "$k" "$v"; load_conf
         echo "OK"
         ;;
@@ -209,7 +209,7 @@ case "$cmd" in
     esac
     ;;
 
-  on|pause)
+  on)
     if ! on_charger; then
       echo "ERR|未插电，旁路无意义"
       exit 1
@@ -232,7 +232,6 @@ case "$cmd" in
       i=$((i + 1))
     done
     logi "ctl on level=$lvl stopped=$ok cur=$CUR"
-    push_ui "已开启旁路 · 电量 ${LEVEL}%"
     if [ "$ok" = "1" ]; then echo "OK"; else echo "OK|已下发，等待电池停充（当前 ${CUR}µA）"; fi
     exit 0
     ;;
@@ -245,7 +244,6 @@ case "$cmd" in
     load_conf
     reconcile
     batt_info
-    push_ui "已恢复自动模式 · 电量 ${LEVEL}%"
     echo "OK"
     ;;
 
@@ -275,11 +273,6 @@ case "$cmd" in
       force_on) sh "$0" auto ;;
       *)        sh "$0" on ;;
     esac
-    ;;
-
-  hide)
-    hide_ui
-    echo "OK"
     ;;
 
   log)

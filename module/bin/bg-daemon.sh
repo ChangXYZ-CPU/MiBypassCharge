@@ -90,8 +90,6 @@ logi "=== daemon start $MODVER pid=$$ backend=$BACKEND mode=$MODE thr=$THRESHOLD
 # 重启多写一次 smart_chg 没有副作用，比漏停充强得多。
 BP=0; write_bp 0
 
-push_ui "旁路供电守护已启动"
-
 wait_stopped() {
   i=0
   while [ "$i" -lt "$1" ]; do
@@ -120,7 +118,6 @@ do_on() {
   if smart_set "$lvl" && wait_stopped "$VERIFY_ON_TRIES"; then
     BP=1; write_bp 1
     logi "BP ON smartchg level=$lvl now=$LEVEL cur=$CUR"
-    push_ui "已开启旁路 · 电量 ${LEVEL}% · 电池 0.00W"
     return 0
   fi
   logi "smart_set no effect (cur=$CUR status=$STATUS)"
@@ -134,7 +131,6 @@ do_on() {
       BACKEND=input_suspend
       save_conf
       BP=1; write_bp 1
-      push_ui "已断充（兜底，非旁路）· 电量 ${LEVEL}%"
       return 0
     fi
     echo 0 > "$INPUT_SUSPEND" 2>/dev/null
@@ -158,19 +154,16 @@ do_off() {
   # 拔了电就别等它"充上"了（拔着电永远等不到，会白等 20 多秒）
   if ! on_charger; then
     logi "BP OFF (unplugged) level=$LEVEL"
-    push_ui "已拔电，旁路解除"
     return 0
   fi
 
   if wait_charging "$VERIFY_OFF_TRIES"; then
     logi "BP OFF level=$LEVEL cur=$CUR (charging resumed)"
-    push_ui "已恢复充电 · 电量 ${LEVEL}%"
   else
     logi "BP OFF but not charging yet (cur=$CUR status=$STATUS) → 再补一次"
     smart_clear
     sleep 4
     batt_info
-    push_ui "已恢复充电 · 电量 ${LEVEL}%"
   fi
   return 0
 }
@@ -309,7 +302,6 @@ while true; do
     logi "status -> $STATUS level=$LEVEL cur=$CUR"
   fi
 
-  save_state
   next_interval
   nap "$IV"
 done

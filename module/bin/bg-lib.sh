@@ -18,23 +18,8 @@ MODDIR=${MODDIR:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}
 SYS=${SYSFS_ROOT:-}
 DATA_DIR=${DATA_DIR_OVERRIDE:-/data/adb/MiBypassCharge}
 CONF=$DATA_DIR/config.conf
-STATE=$DATA_DIR/state
 BPFILE=$DATA_DIR/bp_on
 LOGFILE=$DATA_DIR/bypass.log
-
-# 一次性迁移：旧版本数据目录是 /data/adb/bypass_guard（模块 ID 变更前）。
-# 判断依据是 config.conf 是否存在，而不是目录是否存在——
-# service.sh 会先 mkdir 出新目录，那时目录已存在但里面还是空的。
-# 只复制配置和状态文件，不复制 pid 文件（旧进程已死，复制过去只会误导）。
-# 旧目录保留不删：可回退，且旧模块的 uninstall.sh 还要用。
-OLD_DATA=/data/adb/bypass_guard
-if [ ! -f "$CONF" ] && [ -f "$OLD_DATA/config.conf" ]; then
-  mkdir -p "$DATA_DIR" 2>/dev/null
-  for _f in config.conf state bp_on bypass.log; do
-    [ -e "$OLD_DATA/$_f" ] && cp "$OLD_DATA/$_f" "$DATA_DIR/$_f" 2>/dev/null
-  done
-  rm -f "$OLD_DATA/.watch.lock" 2>/dev/null
-fi
 
 mkdir -p "$DATA_DIR" 2>/dev/null
 
@@ -53,8 +38,7 @@ CHECK_INTERVAL=30
 WATCH=1
 BACKEND=smartchg
 SMART_MODE=3
-FALLBACK=1
-NOTIFY=0'
+FALLBACK=1'
 
 [ -f "$CONF" ] || printf '%s\n' "$DEFAULT_CONF" > "$CONF"
 
@@ -67,7 +51,6 @@ load_conf() {
   [ -z "$THRESHOLD_OFF" ] && THRESHOLD_OFF=70
   [ -z "$MODE" ] && MODE=auto
   [ -z "$ENABLED" ] && ENABLED=1
-  [ -z "$NOTIFY" ] && NOTIFY=0
   [ -z "$BACKEND" ] && BACKEND=smartchg
   [ -z "$SMART_MODE" ] && SMART_MODE=3
   [ -z "$FALLBACK" ] && FALLBACK=1
@@ -98,7 +81,6 @@ save_conf() {
     echo "BACKEND=$BACKEND"
     echo "SMART_MODE=$SMART_MODE"
     echo "FALLBACK=$FALLBACK"
-    echo "NOTIFY=$NOTIFY"
   } > "$CONF"
 }
 
@@ -350,28 +332,3 @@ print_state() {
   return 0
 }
 
-# 只在「看得见的状态」变化时才写盘。
-# 电流/电压/温度不参与比较：它们一直在抖，每轮都写等于每轮多 fork 一次 date，
-# 而界面读的是 bg-ctl status 的实时值，本来就不依赖这个文件。
-STATE_SIG=""
-save_state() {
-  _sig="$LEVEL|$STATUS|$BP|$MODE|$ENABLED|$ONCH|$BACKEND"
-  [ "$_sig" = "$STATE_SIG" ] && return 0
-  STATE_SIG=$_sig
-  print_state ts > "$STATE"
-}
-
-notify() {
-  [ "$NOTIFY" = "1" ] || return 0
-  cmd notification post -S bigtext -t "MiBypassCharge" mibypasscharge "$1" >/dev/null 2>&1
-}
-
-# 没有壳 App 了，这里只做"纯文本通知"，NOTIFY=1 时才发
-push_ui() {
-  [ "$NOTIFY" = "1" ] || return 0
-  notify "$1"
-}
-
-hide_ui() {
-  cmd notification cancel mibypasscharge >/dev/null 2>&1
-}
