@@ -26,7 +26,7 @@ if [ -f "$DATA/supervisor.pid" ]; then
   [ -n "$_o" ] && kill "$_o" 2>/dev/null
   sleep 1
 fi
-# 用脚本名匹配，兼容新旧模块目录名（旧 id=bypass_guard / 新 id=MiBypassCharge）
+# 按脚本名匹配（pid 会被复用，只看 pid 不可靠）
 pkill -f "bg-watch.sh" 2>/dev/null
 pkill -f "bg-supervise.sh" 2>/dev/null
 pkill -f "bg-daemon.sh" 2>/dev/null
